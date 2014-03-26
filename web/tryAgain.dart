@@ -15,8 +15,8 @@ void main()
   gl = canvas.getContext3d();
   if (gl == null) return;
 
-  Mesh lesson = new Mesh();
-  lesson.drawScene(800, 600, 800 / 600);
+  Mesh cube = Mesh.createCube(0.1,0.2,0.3);
+  Mesh.render(gl,cube,800, 600, 800 / 600);
 }
 
 /**
@@ -24,23 +24,34 @@ void main()
  */
 class Mesh 
 {
-  Program prog;
-  Buffer vertexBuffer;
-  List<Mesh> childMeshes;
+  Program prog;           // the render program for this mesh
+  Buffer vertBuffer;      // uploaded vertices data to GPU
+  Buffer idxBuffer;       // uploaded indices data to GPU
+  List<Mesh> childMeshes; // list of children
+  Matrix4 transform;      // transform for this mesh
+  int numTris;            // num of triangles to render
 
   /**
    * creates new mesh from given geometry data
    */
-  Mesh([List<num> vertData=null]) 
+  Mesh([List<double> vertData=null,List<int> idxData=null])
   {
+    transform = new Matrix4();
     childMeshes = new List<Mesh>();
     
     // ----- upload vertex data to buffer
     if (vertData!=null)
     {
-      vertexBuffer = gl.createBuffer();
-      gl.bindBuffer(ARRAY_BUFFER, vertexBuffer);
+      vertBuffer = gl.createBuffer();
+      gl.bindBuffer(ARRAY_BUFFER, vertBuffer);
       gl.bufferDataTyped(ARRAY_BUFFER,new Float32List.fromList(vertData),STATIC_DRAW);
+      numTris = vertData.length~/24;
+      
+      if (idxData==null) idxData = new List<int>();
+      for (int i=0; i<numTris*3; i++)  idxData.add(i);
+      idxBuffer = gl.createBuffer();
+      gl.bindBuffer(ELEMENT_ARRAY_BUFFER, idxBuffer);
+      gl.bufferDataTyped(ELEMENT_ARRAY_BUFFER,new Uint16List.fromList(idxData),STATIC_DRAW);
     }//endif
     
     // ----- create and upload program
@@ -74,11 +85,10 @@ class Mesh
   }//endfunction
   
   /**
-   * 
+   * renders the given mesh tree
    */
-  void drawScene(num viewWidth, num viewHeight, num aspect) 
+  static void render(RenderingContext gl,Mesh m,num viewWidth, num viewHeight, num aspect) 
   {
-    
     gl.clearColor(0.0, 0.0, 0.0, 1.0);  // clear color and alpha
     
     // Basic viewport setup and clearing of the screen
@@ -94,25 +104,26 @@ class Mesh
     print("mvmatrix="+mvMatrix.buf().toString());
         
     // Here's that bindBuffer() again, as seen in the constructor
-    gl.bindBuffer(ARRAY_BUFFER, vertexBuffer);
-    int aLoc = gl.getAttribLocation(prog, 'aVertexPosition');
+    gl.bindBuffer(ELEMENT_ARRAY_BUFFER, m.idxBuffer);   // bind index buffer
+    gl.bindBuffer(ARRAY_BUFFER, m.vertBuffer);          // bind vertex buffer
+    int aLoc = gl.getAttribLocation(m.prog, 'aVertexPosition');
     gl.enableVertexAttribArray(aLoc);
     gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 0, 0);
-    gl.uniformMatrix4fv(gl.getUniformLocation(prog, 'uPMatrix'), false, pMatrix.buf());
-    gl.uniformMatrix4fv(gl.getUniformLocation(prog, 'uMVMatrix'), false, mvMatrix.buf());
-    gl.drawArrays(TRIANGLES, 0, 3);
-  }//
+    gl.uniformMatrix4fv(gl.getUniformLocation(m.prog, 'uPMatrix'), false, pMatrix.buf());
+    gl.uniformMatrix4fv(gl.getUniformLocation(m.prog, 'uMVMatrix'), false, mvMatrix.buf());
+    gl.drawElements(TRIANGLES, m.numTris*3, UNSIGNED_SHORT, 0);
+  }//endfunction
   
   /**
    * creates a cuboid of specified dimensions
    */
-  static Mesh createCube([num w=1,num h=1,num d=1,bool soft=true])
+  static Mesh createCube([double w=1.0,double h=1.0,double d=1.0,bool soft=true])
   {
-    w/=2;
-    h/=2;
-    d/=2;
-    List<num> V = [-w,-h,-d,  w,-h,-d,  w,h,-d,  -w,h,-d,
-                   -w,-h, d,  w,-h, d,  w,h, d,  -w,h, d];
+    w/=2.0;
+    h/=2.0;
+    d/=2.0;
+    List<double> V = [-w,-h,-d,  w,-h,-d,  w,h,-d,  -w,h,-d,
+                      -w,-h, d,  w,-h, d,  w,h, d,  -w,h, d];
     
     List<int> I = [0,3,1, 1,3,2,  // front
                    1,2,5, 5,2,6,  // right
@@ -121,11 +132,11 @@ class Mesh
                    4,0,5, 5,0,1,  // top
                    3,7,2, 2,7,6];// bottom
                        
-    List<num> U = [0,1, 0,0, 1,1, 1,1, 0,0, 1,0];
+    List<double> U = [0.0,1.0, 0.0,0.0, 1.0,1.0, 1.0,1.0, 0.0,0.0, 1.0,0.0];
     
     int i=0;
     int ul=U.length;
-    List<num> VData = new List<num>();
+    List<num> VData = new List<double>();
     if (soft)
     {
       for (i=0; i<I.length; i+=3)
@@ -178,16 +189,6 @@ class Mesh
 
     return prog;
   }//endfunction
-  
-  void animate(num now) {
-    // We're not animating the scene, but if you want to experiment, here's
-    // where you get to play around.
-  }
-
-  void handleKeys() {
-    // We're not handling keys right now, but if you want to experiment, here's
-    // where you'd get to play around.
-  }
   
   /**
    * parses a given obj format string data s to mesh with null texture
