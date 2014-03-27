@@ -6,7 +6,9 @@ import 'matrix4.dart';
 
 CanvasElement canvas = querySelector("#glCanvas");
 RenderingContext gl;
-Matrix4 mvMatrix, pMatrix;
+Matrix4 pMatrix;
+Mesh cube;
+
 
 void main() 
 {
@@ -15,9 +17,17 @@ void main()
   gl = canvas.getContext3d();
   if (gl == null) return;
 
-  Mesh cube = Mesh.createCube(0.1,0.2,0.3);
+  cube = Mesh.createCube(0.5,0.5,0.5);
+  tick(0);
+}
+
+tick(time) 
+{
+  window.animationFrame.then(tick);
+  cube.transform = cube.transform.rotX(0.03).rotY(0.01);
   Mesh.render(gl,cube,800, 600, 800 / 600);
 }
+
 
 /**
  * Statically draw a triangle and a square!
@@ -66,7 +76,6 @@ class Mesh
         
         uniform mat4 uMVMatrix;
         uniform mat4 uPMatrix;
-        uniform mat3 uNMatrix;
     
         void main(void) {
             vPosn = (uMVMatrix * vec4(aPosn, 1.0)).xyz;
@@ -167,26 +176,24 @@ class Mesh
     gl.enable(BLEND);
     
     pMatrix = Matrix4.perspective(45.0, aspect, 0.1, 100.0);
-    mvMatrix = new Matrix4().rotX(1.0).translate(0.0, 0.0, -7.0);
-        
     print("pmatrix="+pMatrix.toString());
-    print("mvmatrix="+mvMatrix.buf().toString());
         
     // Here's that bindBuffer() again, as seen in the constructor
     gl.bindBuffer(ELEMENT_ARRAY_BUFFER, m.idxBuffer);   // bind index buffer
     gl.bindBuffer(ARRAY_BUFFER, m.vertBuffer);          // bind vertex buffer
     int aLoc = gl.getAttribLocation(m.prog, 'aPosn');
     gl.enableVertexAttribArray(aLoc);
-    gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 0, 0);
+    gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 8*4, 0);
     aLoc = gl.getAttribLocation(m.prog, 'aNorm');
     gl.enableVertexAttribArray(aLoc);
-    gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 0, 3*4);
+    gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 8*4, 3*4);
     aLoc = gl.getAttribLocation(m.prog, 'aUV');
     gl.enableVertexAttribArray(aLoc);
-    gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 0, 6*4);
+    gl.vertexAttribPointer(aLoc, 2, FLOAT, false, 8*4, 6*4);
     gl.uniformMatrix4fv(gl.getUniformLocation(m.prog, 'uPMatrix'), false, pMatrix.buf());
-    gl.uniformMatrix4fv(gl.getUniformLocation(m.prog, 'uMVMatrix'), false, mvMatrix.buf());
-    gl.drawElements(TRIANGLES, m.numTris*3, UNSIGNED_SHORT, 0);
+    gl.uniformMatrix4fv(gl.getUniformLocation(m.prog, 'uMVMatrix'), false, m.transform.translate(0.0, 0.0, -3.0).buf());
+    gl.drawArrays(TRIANGLES, 0, m.numTris*3);
+    //gl.drawElements(TRIANGLES, m.numTris*3, UNSIGNED_SHORT, 0);
   }//endfunction
   
   /**
@@ -229,13 +236,13 @@ class Mesh
                    5,6,4, 4,6,7,  // back
                    4,7,0, 0,7,3,  // left
                    4,0,5, 5,0,1,  // top
-                   3,7,2, 2,7,6];// bottom
+                   3,7,2, 2,7,6]; // bottom
                        
     List<double> U = [0.0,1.0, 0.0,0.0, 1.0,1.0, 1.0,1.0, 0.0,0.0, 1.0,0.0];
     
     int i=0;
     int ul=U.length;
-    List<num> VData = new List<double>();
+    List<double> VData = new List<double>();
     if (soft)
     {
       for (i=0; i<I.length; i+=3)
@@ -262,6 +269,7 @@ class Mesh
                     0,0,0,  // normal c
                     U[(i*2)%ul+4],U[(i*2)%ul+5]]);
     }
+    print('VData='+VData.toString());
     return new Mesh(VData);
   }//endfunction
     
