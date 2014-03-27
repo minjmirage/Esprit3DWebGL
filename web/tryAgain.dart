@@ -55,21 +55,77 @@ class Mesh
     }//endif
     
     // ----- create and upload program
-    String vertSrc =  '''
-        attribute vec3 aVertexPosition;
-
+    String vertSrc = '''
+        attribute vec3 aPosn;
+        attribute vec2 aUV;
+        attribute vec3 aNorm;
+        
+        varying vec4 vPosn;
+        varying vec2 vUV;
+        varying vec3 vNorm;
+        
         uniform mat4 uMVMatrix;
         uniform mat4 uPMatrix;
-
+        uniform mat3 uNMatrix;
+    
         void main(void) {
-            gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 1.0);
+            vPosn = uMVMatrix * vec4(aPosn, 1.0);
+            gl_Position = uPMatrix * vPosn;
+            vUV = aUV;
+            vNorm = uNMatrix * aNorm;
         }
       ''';
     String fragSrc =  '''
         precision mediump float;
-
+        
+        varying vec2 vUV;
+        varying vec3 vNorm;
+        varying vec4 vPosn;
+        
+        uniform float uMaterialShininess;
+        
+        uniform bool uShowSpecularHighlights;
+        uniform bool uUseLighting;
+        uniform bool uUseTextures;
+        
+        uniform vec3 uAmbientColor;
+        
+        uniform vec3 uPointLightingLocation;
+        uniform vec3 uPointLightingSpecularColor;
+        uniform vec3 uPointLightingDiffuseColor;
+        
+        uniform sampler2D uSampler;
+        
+        
         void main(void) {
-            gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);
+            vec3 lightWeighting;
+            if (!uUseLighting) {
+                lightWeighting = vec3(1.0, 1.0, 1.0);
+            } else {
+                vec3 lightDirection = normalize(uPointLightingLocation - vPosn.xyz);
+                vec3 normal = normalize(vNorm);
+        
+                float specularLightWeighting = 0.0;
+                if (uShowSpecularHighlights) {
+                    vec3 eyeDirection = normalize(-vPosn.xyz);
+                    vec3 reflectionDirection = reflect(-lightDirection, normal);
+        
+                    specularLightWeighting = pow(max(dot(reflectionDirection, eyeDirection), 0.0), uMaterialShininess);
+                }
+        
+                float diffuseLightWeighting = max(dot(normal, lightDirection), 0.0);
+                lightWeighting = uAmbientColor
+                    + uPointLightingSpecularColor * specularLightWeighting
+                    + uPointLightingDiffuseColor * diffuseLightWeighting;
+            }
+        
+            vec4 fragmentColor;
+            if (uUseTextures) {
+                fragmentColor = texture2D(uSampler, vec2(vUV.s, vUV.t));
+            } else {
+                fragmentColor = vec4(1.0, 1.0, 1.0, 1.0);
+            }
+            gl_FragColor = vec4(fragmentColor.rgb * lightWeighting, fragmentColor.a);
         }
       ''';
     prog = uploadShaderProgram(vertSrc,fragSrc);
@@ -106,12 +162,42 @@ class Mesh
     // Here's that bindBuffer() again, as seen in the constructor
     gl.bindBuffer(ELEMENT_ARRAY_BUFFER, m.idxBuffer);   // bind index buffer
     gl.bindBuffer(ARRAY_BUFFER, m.vertBuffer);          // bind vertex buffer
-    int aLoc = gl.getAttribLocation(m.prog, 'aVertexPosition');
+    int aLoc = gl.getAttribLocation(m.prog, 'aVert');
     gl.enableVertexAttribArray(aLoc);
     gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 0, 0);
+    aLoc = gl.getAttribLocation(m.prog, 'aNorm');
+    gl.enableVertexAttribArray(aLoc);
+    gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 0, 3);
+    aLoc = gl.getAttribLocation(m.prog, 'aUV');
+    gl.enableVertexAttribArray(aLoc);
+    gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 0, 6);
     gl.uniformMatrix4fv(gl.getUniformLocation(m.prog, 'uPMatrix'), false, pMatrix.buf());
     gl.uniformMatrix4fv(gl.getUniformLocation(m.prog, 'uMVMatrix'), false, mvMatrix.buf());
     gl.drawElements(TRIANGLES, m.numTris*3, UNSIGNED_SHORT, 0);
+  }//endfunction
+  
+  /**
+   * compiles and uploads shader program
+   */
+  static Program uploadShaderProgram(String vertSrc, String fragSrc) 
+  {
+    Shader vertShader = gl.createShader(VERTEX_SHADER);
+    gl.shaderSource(vertShader, vertSrc);
+    gl.compileShader(vertShader);
+
+    Shader fragShader = gl.createShader(FRAGMENT_SHADER);
+    gl.shaderSource(fragShader, fragSrc);
+    gl.compileShader(fragShader);
+
+    Program prog = gl.createProgram();
+    gl.attachShader(prog, vertShader);
+    gl.attachShader(prog, fragShader);
+    gl.linkProgram(prog);
+
+    Object linkStat = gl.getProgramParameter(prog, LINK_STATUS);
+    print("linkStatus=" + linkStat.toString());
+
+    return prog;
   }//endfunction
   
   /**
@@ -165,31 +251,7 @@ class Mesh
     }
     return new Mesh(VData);
   }//endfunction
-  
-  /**
-   * compiles and uploads shader program
-   */
-  static Program uploadShaderProgram(String vertSrc, String fragSrc) 
-  {
-    Shader vertShader = gl.createShader(VERTEX_SHADER);
-    gl.shaderSource(vertShader, vertSrc);
-    gl.compileShader(vertShader);
-
-    Shader fragShader = gl.createShader(FRAGMENT_SHADER);
-    gl.shaderSource(fragShader, fragSrc);
-    gl.compileShader(fragShader);
-
-    Program prog = gl.createProgram();
-    gl.attachShader(prog, vertShader);
-    gl.attachShader(prog, fragShader);
-    gl.linkProgram(prog);
-
-    Object linkStat = gl.getProgramParameter(prog, LINK_STATUS);
-    print("linkStatus=" + linkStat.toString());
-
-    return prog;
-  }//endfunction
-  
+    
   /**
    * parses a given obj format string data s to mesh with null texture
    * Mtls: [id1,bmd1,id2,bmd2,...]
