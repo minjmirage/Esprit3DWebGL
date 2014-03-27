@@ -60,7 +60,7 @@ class Mesh
         attribute vec2 aUV;
         attribute vec3 aNorm;
         
-        varying vec4 vPosn;
+        varying vec3 vPosn;
         varying vec2 vUV;
         varying vec3 vNorm;
         
@@ -69,18 +69,30 @@ class Mesh
         uniform mat3 uNMatrix;
     
         void main(void) {
-            vPosn = uMVMatrix * vec4(aPosn, 1.0);
-            gl_Position = uPMatrix * vPosn;
+            vPosn = (uMVMatrix * vec4(aPosn, 1.0)).xyz;
+            gl_Position = uPMatrix * vec4(vPosn, 1.0);
             vUV = aUV;
-            vNorm = uNMatrix * aNorm;
+            vNorm = (uMVMatrix * vec4(aNorm, 0.0)).xyz;
         }
       ''';
-    String fragSrc =  '''
+    String fragSrc = '''
+        precision highp float;
+        
+        varying vec2 vUV;
+        varying vec3 vNorm;
+        varying vec3 vPosn;
+               
+        void main(void) {
+            gl_FragColor = vec4(1.0,1.0,1.0,1.0);
+        }
+      '''; 
+      /*  
+        '''
         precision mediump float;
         
         varying vec2 vUV;
         varying vec3 vNorm;
-        varying vec4 vPosn;
+        varying vec3 vPosn;
         
         uniform float uMaterialShininess;
         
@@ -128,6 +140,7 @@ class Mesh
             gl_FragColor = vec4(fragmentColor.rgb * lightWeighting, fragmentColor.a);
         }
       ''';
+      */
     prog = uploadShaderProgram(vertSrc,fragSrc);
     gl.useProgram(prog);
   }//endconstr
@@ -154,7 +167,7 @@ class Mesh
     gl.enable(BLEND);
     
     pMatrix = Matrix4.perspective(45.0, aspect, 0.1, 100.0);
-    mvMatrix = new Matrix4().rotX(1.0).translate(-1.5, 0.0, -7.0);
+    mvMatrix = new Matrix4().rotX(1.0).translate(0.0, 0.0, -7.0);
         
     print("pmatrix="+pMatrix.toString());
     print("mvmatrix="+mvMatrix.buf().toString());
@@ -162,15 +175,15 @@ class Mesh
     // Here's that bindBuffer() again, as seen in the constructor
     gl.bindBuffer(ELEMENT_ARRAY_BUFFER, m.idxBuffer);   // bind index buffer
     gl.bindBuffer(ARRAY_BUFFER, m.vertBuffer);          // bind vertex buffer
-    int aLoc = gl.getAttribLocation(m.prog, 'aVert');
+    int aLoc = gl.getAttribLocation(m.prog, 'aPosn');
     gl.enableVertexAttribArray(aLoc);
     gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 0, 0);
     aLoc = gl.getAttribLocation(m.prog, 'aNorm');
     gl.enableVertexAttribArray(aLoc);
-    gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 0, 3);
+    gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 0, 3*4);
     aLoc = gl.getAttribLocation(m.prog, 'aUV');
     gl.enableVertexAttribArray(aLoc);
-    gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 0, 6);
+    gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 0, 6*4);
     gl.uniformMatrix4fv(gl.getUniformLocation(m.prog, 'uPMatrix'), false, pMatrix.buf());
     gl.uniformMatrix4fv(gl.getUniformLocation(m.prog, 'uMVMatrix'), false, mvMatrix.buf());
     gl.drawElements(TRIANGLES, m.numTris*3, UNSIGNED_SHORT, 0);
@@ -228,26 +241,26 @@ class Mesh
       for (i=0; i<I.length; i+=3)
       VData.addAll([V[I[i+0]*3+0],V[I[i+0]*3+1],V[I[i+0]*3+2],  // vertex a
                     V[I[i+0]*3+0],V[I[i+0]*3+1],V[I[i+0]*3+2],  // normal a
-                    U[i*2%ul+0],U[i*2%ul+1],
+                    U[(i*2)%ul+0],U[(i*2)%ul+1],
                     V[I[i+1]*3+0],V[I[i+1]*3+1],V[I[i+1]*3+2],  // vertex b
                     V[I[i+1]*3+0],V[I[i+1]*3+1],V[I[i+1]*3+2],  // normal b
-                    U[i*2%ul+2],U[i*2%ul+3],
+                    U[(i*2)%ul+2],U[(i*2)%ul+3],
                     V[I[i+2]*3+0],V[I[i+2]*3+1],V[I[i+2]*3+2],  // vertex c
                     V[I[i+2]*3+0],V[I[i+2]*3+1],V[I[i+2]*3+2],  // normal c
-                    U[i*2%ul+4],U[i*2%ul+5]]);
+                    U[(i*2)%ul+4],U[(i*2)%ul+5]]);
     }
     else
     {
       for (i=0; i<I.length; i+=3)
       VData.addAll([V[I[i+0]*3+0],V[I[i+0]*3+1],V[I[i+0]*3+2],  // vertex a
                     0,0,0,  // normal a
-                    U[i*2%ul+0],U[i*2%ul+1],
+                    U[(i*2)%ul+0],U[(i*2)%ul+1],
                     V[I[i+1]*3+0],V[I[i+1]*3+1],V[I[i+1]*3+2],  // vertex b
                     0,0,0,  // normal b
-                    U[i*2%ul+2],U[i*2%ul+3],
+                    U[(i*2)%ul+2],U[(i*2)%ul+3],
                     V[I[i+2]*3+0],V[I[i+2]*3+1],V[I[i+2]*3+2],  // vertex c
                     0,0,0,  // normal c
-                    U[i*2%ul+4],U[i*2%ul+5]]);
+                    U[(i*2)%ul+4],U[(i*2)%ul+5]]);
     }
     return new Mesh(VData);
   }//endfunction
