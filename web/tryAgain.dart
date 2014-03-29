@@ -1,14 +1,13 @@
 import 'dart:html';
 import 'dart:web_gl';
 import 'dart:typed_data';
-
+import 'dart:math';
 import 'matrix4.dart';
 
 CanvasElement canvas = querySelector("#glCanvas");
 RenderingContext gl;
 Matrix4 pMatrix;
 Mesh cube;
-
 
 void main() 
 {
@@ -17,20 +16,24 @@ void main()
   gl = canvas.getContext3d();
   if (gl == null) return;
 
-  cube = Mesh.createCube(0.5,0.5,0.5);
-  tick(0);
+  cube = Mesh.createCube(1.5,1.5,1.5);
+  tick(0.0);
 }
 
-tick(time) 
+tick(double time) 
 {
   window.animationFrame.then(tick);
-  cube.transform = cube.transform.rotX(0.03).rotY(0.01);
+  print("time:"+time.toString());
+  double r = 10.0+5*sin(time/500);
+  double sinT = sin(sin(time/1000));
+  Mesh.setCamera(r*cos(sinT)*sin(time/1000), r*sin(sinT), r*cos(sinT)*cos(time/1000), 0.0,0.0,0.0);
+  //Mesh.setCamera(r*sin(time/1000),0.0, r*cos(time/1000), 0.0,0.0,0.0);
   Mesh.render(gl,cube,800, 600, 800 / 600);
 }
 
 
 /**
- * Statically draw a triangle and a square!
+ * 
  */
 class Mesh 
 {
@@ -40,12 +43,18 @@ class Mesh
   List<Mesh> childMeshes; // list of children
   Matrix4 transform;      // transform for this mesh
   int numTris;            // num of triangles to render
-
+  
+  static List<PointLight> lightPts;
+  static Matrix4 viewT;   // view transform of the whole scene to be rendered
+  static Matrix4 camT;    // camera transform, inverse of viewT
+  static Matrix4 persT;   // perspective transform matrix
+  
   /**
    * creates new mesh from given geometry data
    */
   Mesh([List<double> vertData=null,List<int> idxData=null])
   {
+    lightPts = [new PointLight(0.0,0.0,10.0)];
     transform = new Matrix4();
     childMeshes = new List<Mesh>();
     
@@ -90,9 +99,17 @@ class Mesh
         varying vec2 vUV;
         varying vec3 vNorm;
         varying vec3 vPosn;
-               
-        void main(void) {
-            gl_FragColor = vec4(1.0,1.0,1.0,1.0);
+        
+        uniform vec3 lPoint;
+        uniform vec3 lColor;
+
+        void main(void) 
+        {
+            vec3 texColor = lColor;
+            vec3 lightDir = normalize(lPoint - vPosn);
+            vec3 norm = normalize(vNorm);
+            vec3 diffuse = texColor*dot(lightDir,norm);
+            gl_FragColor = vec4(diffuse,1.0);
         }
       '''; 
       /*  
@@ -165,7 +182,7 @@ class Mesh
   /**
    * renders the given mesh tree
    */
-  static void render(RenderingContext gl,Mesh m,num viewWidth, num viewHeight, num aspect) 
+  static void render(RenderingContext gl,Mesh m,int viewWidth, int viewHeight, double aspect) 
   {
     gl.clearColor(0.0, 0.0, 0.0, 1.0);  // clear color and alpha
     
@@ -175,9 +192,8 @@ class Mesh
     gl.enable(DEPTH_TEST);
     gl.enable(BLEND);
     
-    pMatrix = Matrix4.perspective(45.0, aspect, 0.1, 100.0);
-    print("pmatrix="+pMatrix.toString());
-        
+    pMatrix = Matrix4.perspective(45.0, aspect, 0.1, 100.0);  // hardcoded perspective matrix
+           
     // Here's that bindBuffer() again, as seen in the constructor
     gl.bindBuffer(ELEMENT_ARRAY_BUFFER, m.idxBuffer);   // bind index buffer
     gl.bindBuffer(ARRAY_BUFFER, m.vertBuffer);          // bind vertex buffer
@@ -191,7 +207,32 @@ class Mesh
     gl.enableVertexAttribArray(aLoc);
     gl.vertexAttribPointer(aLoc, 2, FLOAT, false, 8*4, 6*4);
     gl.uniformMatrix4fv(gl.getUniformLocation(m.prog, 'uPMatrix'), false, pMatrix.buf());
-    gl.uniformMatrix4fv(gl.getUniformLocation(m.prog, 'uMVMatrix'), false, m.transform.translate(0.0, 0.0, -3.0).buf());
+    gl.uniformMatrix4fv(gl.getUniformLocation(m.prog, 'uMVMatrix'), false, viewT.mult(m.transform).buf());
+    /*
+    Float32List lPs = new Float32List(lightPts.length*3);   // light positions
+    Float32List lCs = new Float32List(lightPts.length*3);   // light colors
+    for (int i=lightPts.length-1; i>-1; i--)
+    {
+      PointLight lpt = lightPts[i];
+      /*
+      lPs[i*3+0] = lpt.px*viewT.aa+lpt.py*viewT.ab+lpt.pz*viewT.ac+viewT.ad;  // transformed lightPt x
+      lPs[i*3+1] = lpt.px*viewT.ba+lpt.py*viewT.bb+lpt.pz*viewT.bc+viewT.bd;  // transformed lightPt y
+      lPs[i*3+2] = lpt.px*viewT.ca+lpt.py*viewT.cb+lpt.pz*viewT.cc+viewT.cd;  // transformed lightPt z
+      */
+      lPs[i*3+0] = lpt.px;
+      lPs[i*3+1] = lpt.py;
+      lPs[i*3+2] = lpt.pz;
+      lCs[i*3+0] = lpt.r;
+      lCs[i*3+1] = lpt.g;
+      lCs[i*3+2] = lpt.b;
+    }*/
+    PointLight lpt = lightPts[0];
+    //gl.uniform3fv(gl.getUniformLocation(m.prog, 'lPoints['+lightPts.length.toString()+']'),new Float32List.fromList([lpt.px,lpt.py,lpt.pz]));
+    //gl.uniform3fv(gl.getUniformLocation(m.prog, 'lColors['+lightPts.length.toString()+']'),new Float32List.fromList([lpt.r,lpt.g,lpt.b]));
+    gl.uniform3f(gl.getUniformLocation(m.prog, 'lPoint'),lpt.px,lpt.py,lpt.pz);
+    gl.uniform3f(gl.getUniformLocation(m.prog, 'lColor'),lpt.r,lpt.g,lpt.b);
+        
+    gl.uniformMatrix4fv(gl.getUniformLocation(m.prog, 'uMVMatrix'), false, viewT.mult(m.transform).buf());
     gl.drawArrays(TRIANGLES, 0, m.numTris*3);
     //gl.drawElements(TRIANGLES, m.numTris*3, UNSIGNED_SHORT, 0);
   }//endfunction
@@ -218,6 +259,40 @@ class Mesh
     print("linkStatus=" + linkStat.toString());
 
     return prog;
+  }//endfunction
+  
+  /**
+   * sets camera to look from (px,py,pz) at (tx,ty,tz), camera is always oriented y up with elevation angle
+   */
+  static Matrix4 setCamera(double px,double py,double pz,double tx,double ty,double tz,[double fov=45.0,double near=1.0,double far=1000.0])
+  {
+    double nearClip = max(0,near);
+    double farClip = max(0,far);
+    nearClip = min(near,far);
+    farClip = max(near,far);
+    double aspectRatio = 1.0;
+    persT = Matrix4.perspective(fov, aspectRatio, nearClip, farClip);
+    viewT = getViewTransform(px,py,pz,tx,ty,tz);
+    camT = viewT.inverse();
+    return camT.scale(1.0,1.0,1.0); // duplicate and return
+  }//endfunction
+  
+  static void setLights(List<PointLight> lights)
+  {
+    
+  }//endfunction
+  
+  /**
+   * returns scene transform matrix eqv of camera looking from (px,py,pz) at point (tx,ty,tz)
+   */
+  static Matrix4 getViewTransform(double px,double py,double pz,double tx,double ty,double tz)
+  {
+    double vx = tx-px;
+    double vy = ty-py;
+    double vz = tz-pz;
+    double roty = atan2(vx,vz);
+    double rotx = atan2(-vy,sqrt(vx*vx+vz*vz));
+    return new Matrix4().translate(px,py,pz).rotY(-roty).rotX(-rotx);
   }//endfunction
   
   /**
@@ -269,7 +344,6 @@ class Mesh
                     0,0,0,  // normal c
                     U[(i*2)%ul+4],U[(i*2)%ul+5]]);
     }
-    print('VData='+VData.toString());
     return new Mesh(VData);
   }//endfunction
     
@@ -284,9 +358,9 @@ class Mesh
     
     // ----- read data from string
     List<String> D = s.split('\n');
-    List<num> V = new List<num>();    // list to contain vertices data
-    List<num> T = new List<num>();    // list to contain texture coordinates data
-    List<num> N = new List<num>();    // list to contain normals data
+    List<double> V = new List<double>();    // list to contain vertices data
+    List<double> T = new List<double>();    // list to contain texture coordinates data
+    List<double> N = new List<double>();    // list to contain normals data
     
     List F = new List();              // list to contain triangle faces data
     List G = new List();              // groups array, containing submeshes faces 
@@ -301,7 +375,7 @@ class Mesh
         for (j=A.length-1; j>=0; j--)
           if (A[j]=="") A.removeAt(j);
         for (j=0; j<A.length && j<3; j++)
-          V.add(num.parse(A[j]));
+          V.add(double.parse(A[j]));
       }
       else if (D[i].startsWith('vt '))   // ----- if vertex uv definition
       {
@@ -309,7 +383,7 @@ class Mesh
         for (j=A.length-1; j>=0; j--)
           if (A[j]=="") A.removeAt(j);
         for (j=0; j<A.length && j<2; j++)   // restrict to u,v instead of u,v,t
-          T.add(num.parse(A[j]));
+          T.add(double.parse(A[j]));
       }
       else if (D[i].startsWith('vn '))   // ----- if vertex normal definition
       {
@@ -321,7 +395,7 @@ class Mesh
           if (A[j]=="") A.removeAt(j);
         }
         for (j=0; j<A.length && j<3; j++)
-          N.add(num.parse(A[j]));
+          N.add(double.parse(A[j]));
       }
       else if (D[i].startsWith('f '))    // ----- if face definition
       {
@@ -357,14 +431,14 @@ class Mesh
     
     Mesh mmesh = new Mesh();              // main mesh to add all submeshes into
     
-    num onNumParseError(String s) {return 1;};
+    double onNumParseError(String s) {return 1.0;};
     
     for (int g=0; g<G.length; g++)
     {
       F = G[g];
       
       // ----- import faces data -----------------------------
-      List<num> verticesData = new List<num>();  // to contain [vx,vy,vz,nx,ny,nz,u,v, ....]
+      List<double> verticesData = new List<double>();  // to contain [vx,vy,vz,nx,ny,nz,u,v, ....]
       for (i=0; i<F.length; i++)
       {
         if (F[i] is String) // switch to another material
@@ -377,9 +451,9 @@ class Mesh
                   
           for (j=0; j<f.length; j++)
           {
-            List p = f[j];      // data of a point: [v,uv,n] to num
+            List p = f[j];      // data of a point: [v,uv,n] to double
             for (int k=0; k<p.length; k++)
-              p[k] = (num.parse(p[k],onNumParseError)).toInt()-1; 
+              p[k] = (double.parse(p[k],onNumParseError)).toInt()-1; 
           }
           
           // ----- triangulate higher order polygons
@@ -391,38 +465,38 @@ class Mesh
             // A: [v,uv,n,v,uv,n,v,uv,n]
             
             // ----- get vertices --------------------------------
-            num vax = V[A[0]*3+0];
-            num vay = V[A[0]*3+1];
-            num vaz = V[A[0]*3+2];
-            num vbx = V[A[3]*3+0];
-            num vby = V[A[3]*3+1];
-            num vbz = V[A[3]*3+2];
-            num vcx = V[A[6]*3+0];
-            num vcy = V[A[6]*3+1];
-            num vcz = V[A[6]*3+2];
+            double vax = V[A[0]*3+0];
+            double vay = V[A[0]*3+1];
+            double vaz = V[A[0]*3+2];
+            double vbx = V[A[3]*3+0];
+            double vby = V[A[3]*3+1];
+            double vbz = V[A[3]*3+2];
+            double vcx = V[A[6]*3+0];
+            double vcy = V[A[6]*3+1];
+            double vcz = V[A[6]*3+2];
             
             // ----- get normals ---------------------------------
-            num px = vbx - vax;
-            num py = vby - vay;
-            num pz = vbz - vaz;
+            double px = vbx - vax;
+            double py = vby - vay;
+            double pz = vbz - vaz;
               
-            num qx = vcx - vax;
-            num qy = vcy - vay;
-            num qz = vcz - vaz;
+            double qx = vcx - vax;
+            double qy = vcy - vay;
+            double qz = vcz - vaz;
             // normal by determinant
-            num nx = py*qz-pz*qy;  //  unit normal x for the triangle
-            num ny = pz*qx-px*qz;  //  unit normal y for the triangle
-            num nz = px*qy-py*qx;  //  unit normal z for the triangle
+            double nx = py*qz-pz*qy;  //  unit normal x for the triangle
+            double ny = pz*qx-px*qz;  //  unit normal y for the triangle
+            double nz = px*qy-py*qx;  //  unit normal z for the triangle
             
-            num nax = nx;   // calculated normals
-            num nay = ny;
-            num naz = nz;
-            num nbx = nx;
-            num nby = ny;
-            num nbz = nz;
-            num ncx = nx;
-            num ncy = ny;
-            num ncz = nz;
+            double nax = nx;   // calculated normals
+            double nay = ny;
+            double naz = nz;
+            double nbx = nx;
+            double nby = ny;
+            double nbz = nz;
+            double ncx = nx;
+            double ncy = ny;
+            double ncz = nz;
             if (N.length>0)
             {
               nax = N[A[2]*3+0];
@@ -437,12 +511,12 @@ class Mesh
             }
             
             // ----- get UVs -------------------------------------
-            num ua = 0;
-            num va = 0;
-            num ub = 1;
-            num vb = 0;
-            num uc = 0;
-            num vc = 1;
+            double ua = 0.0;
+            double va = 0.0;
+            double ub = 1.0;
+            double vb = 0.0;
+            double uc = 0.0;
+            double vc = 1.0;
             if (T.length>0)
             {
               ua = T[A[1]*2+0];
@@ -452,7 +526,7 @@ class Mesh
               uc = T[A[7]*2+0];
               vc = 1-T[A[7]*2+1];
             }
-                                  
+            
             verticesData.addAll([ vax,vay,vaz, nax,nay,naz, ua,va,
                                   vbx,vby,vbz, nbx,nby,nbz, ub,vb,
                                   vcx,vcy,vcz, ncx,ncy,ncz, uc,vc]);
@@ -471,4 +545,29 @@ class Mesh
     
     return mmesh; // returns mesh with submeshes in it
   }//endfunction
+}//endclass
+
+/**
+ * data class for poing light info
+ */
+class PointLight
+{
+  double px;
+  double py;
+  double pz;
+  double att;
+  double r;
+  double g;
+  double b;
+  
+  PointLight(double x,double y,double z,[double red=1.0,double green=1.0,double blue=1.0,double attenuation=100.0])
+  {
+    px=x;
+    py=y;
+    pz=z;
+    r=red;
+    g=green;
+    b=blue;
+    att=attenuation;
+  }//endconstr
 }//endclass
