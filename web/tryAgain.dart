@@ -16,9 +16,11 @@ void main()
   gl = canvas.getContext3d();
   if (gl == null) return;
 
-  cube = Mesh.createCube(1.5,1.5,1.5);
-  tick(0.0);
-}
+  Mesh.loadObj('tyre.obj', (Mesh m) {
+     cube = m;
+     tick(0.0);
+  });
+}//endmain
 
 tick(double time) 
 {
@@ -26,8 +28,12 @@ tick(double time)
   print("time:"+time.toString());
   double r = 10.0+5*sin(time/500);
   double sinT = sin(sin(time/1000));
+  
+  Mesh.setLights([new PointLight(10.0*sin(time/500),0.0,10.0*cos(time/500),1.0,0.0,0.0),
+                  new PointLight(10.0*sin(time/500+PI*2/3),0.0,10.0*cos(time/500+PI*2/3),0.0,1.0,0.0),
+                  new PointLight(10.0*sin(time/500+PI*4/3),0.0,10.0*cos(time/500+PI*4/3),0.0,0.0,1.0)]);
   Mesh.setCamera(r*cos(sinT)*sin(time/1000), r*sin(sinT), r*cos(sinT)*cos(time/1000), 0.0,0.0,0.0);
-  //Mesh.setCamera(r*sin(time/1000),0.0, r*cos(time/1000), 0.0,0.0,0.0);
+  
   Mesh.render(gl,cube,800, 600, 800 / 600);
 }
 
@@ -42,19 +48,26 @@ class Mesh
   Buffer idxBuffer;       // uploaded indices data to GPU
   List<Mesh> childMeshes; // list of children
   Matrix4 transform;      // transform for this mesh
+  Matrix4 _workingT;      // used for rendering 
   int numTris;            // num of triangles to render
+  int prepOnState=-1;     // current state id shader programs are compiled on
   
-  static List<PointLight> lightPts;
-  static Matrix4 viewT;   // view transform of the whole scene to be rendered
-  static Matrix4 camT;    // camera transform, inverse of viewT
-  static Matrix4 persT;   // perspective transform matrix
+  static int stateId=0;             // incremented when user changes render parameters
+  static List<PointLight> lightPts; // 
+  static Matrix4 viewT;             // view transform of the whole scene to be rendered
+  static Matrix4 camT;              // camera transform, inverse of viewT
+  static Matrix4 persT;             // perspective transform matrix
   
   /**
    * creates new mesh from given geometry data
    */
   Mesh([List<double> vertData=null,List<int> idxData=null])
   {
-    lightPts = [new PointLight(0.0,0.0,10.0)];
+    // ----- set default global states if not initialized
+    if (viewT==null || persT==null) Mesh.setCamera(0.0,0.0,10.0,0.0,0.0,0.0);
+    if (lightPts==null) lightPts = [new PointLight(0.0,0.0,10.0)];
+    
+    // ----- set default for this mesh
     transform = new Matrix4();
     childMeshes = new List<Mesh>();
     
@@ -73,103 +86,125 @@ class Mesh
       gl.bufferDataTyped(ELEMENT_ARRAY_BUFFER,new Uint16List.fromList(idxData),STATIC_DRAW);
     }//endif
     
-    // ----- create and upload program
-    String vertSrc = '''
-        attribute vec3 aPosn;
-        attribute vec2 aUV;
-        attribute vec3 aNorm;
-        
-        varying vec3 vPosn;
-        varying vec2 vUV;
-        varying vec3 vNorm;
-        
-        uniform mat4 uMVMatrix;
-        uniform mat4 uPMatrix;
-    
-        void main(void) {
-            vPosn = (uMVMatrix * vec4(aPosn, 1.0)).xyz;
-            gl_Position = uPMatrix * vec4(vPosn, 1.0);
-            vUV = aUV;
-            vNorm = (uMVMatrix * vec4(aNorm, 0.0)).xyz;
-        }
-      ''';
-    String fragSrc = '''
-        precision highp float;
-        
-        varying vec2 vUV;
-        varying vec3 vNorm;
-        varying vec3 vPosn;
-        
-        uniform vec3 lPoint;
-        uniform vec3 lColor;
-
-        void main(void) 
-        {
-            vec3 texColor = lColor;
-            vec3 lightDir = normalize(lPoint - vPosn);
-            vec3 norm = normalize(vNorm);
-            vec3 diffuse = texColor*dot(lightDir,norm);
-            gl_FragColor = vec4(diffuse,1.0);
-        }
-      '''; 
-      /*  
-        '''
-        precision mediump float;
-        
-        varying vec2 vUV;
-        varying vec3 vNorm;
-        varying vec3 vPosn;
-        
-        uniform float uMaterialShininess;
-        
-        uniform bool uShowSpecularHighlights;
-        uniform bool uUseLighting;
-        uniform bool uUseTextures;
-        
-        uniform vec3 uAmbientColor;
-        
-        uniform vec3 uPointLightingLocation;
-        uniform vec3 uPointLightingSpecularColor;
-        uniform vec3 uPointLightingDiffuseColor;
-        
-        uniform sampler2D uSampler;
-        
-        
-        void main(void) {
-            vec3 lightWeighting;
-            if (!uUseLighting) {
-                lightWeighting = vec3(1.0, 1.0, 1.0);
-            } else {
-                vec3 lightDirection = normalize(uPointLightingLocation - vPosn.xyz);
-                vec3 normal = normalize(vNorm);
-        
-                float specularLightWeighting = 0.0;
-                if (uShowSpecularHighlights) {
-                    vec3 eyeDirection = normalize(-vPosn.xyz);
-                    vec3 reflectionDirection = reflect(-lightDirection, normal);
-        
-                    specularLightWeighting = pow(max(dot(reflectionDirection, eyeDirection), 0.0), uMaterialShininess);
-                }
-        
-                float diffuseLightWeighting = max(dot(normal, lightDirection), 0.0);
-                lightWeighting = uAmbientColor
-                    + uPointLightingSpecularColor * specularLightWeighting
-                    + uPointLightingDiffuseColor * diffuseLightWeighting;
-            }
-        
-            vec4 fragmentColor;
-            if (uUseTextures) {
-                fragmentColor = texture2D(uSampler, vec2(vUV.s, vUV.t));
-            } else {
-                fragmentColor = vec4(1.0, 1.0, 1.0, 1.0);
-            }
-            gl_FragColor = vec4(fragmentColor.rgb * lightWeighting, fragmentColor.a);
-        }
-      ''';
-      */
-    prog = uploadShaderProgram(vertSrc,fragSrc);
-    gl.useProgram(prog);
+    prepareForRender();
   }//endconstr
+  
+  /**
+   * compiles the shader program specific to the mesh and upload
+   */
+  void prepareForRender()
+  {
+    // ----- construct vertex shader source -------------
+    String vertSrc = '''
+     attribute vec3 aPosn;
+     attribute vec2 aUV;
+     attribute vec3 aNorm;
+     
+     varying vec3 vPosn;
+     varying vec2 vUV;
+     varying vec3 vNorm;
+     
+     uniform mat4 uMVMatrix;
+     uniform mat4 uPMatrix;
+ 
+     void main(void) {
+         vPosn = (uMVMatrix * vec4(aPosn, 1.0)).xyz;
+         gl_Position = uPMatrix * vec4(vPosn, 1.0);
+         vUV = aUV;
+         vNorm = (uMVMatrix * vec4(aNorm, 0.0)).xyz;
+     }
+    ''';
+    
+    // ----- construct fragment shader source -----------
+    String fragSrc = '''
+     precision highp float;
+     
+     varying vec2 vUV;
+     varying vec3 vNorm;
+     varying vec3 vPosn;
+     
+     uniform vec3 lPoints['''+lightPts.length.toString()+'''];
+     uniform vec3 lColors['''+lightPts.length.toString()+'''];
+     
+     void main(void) 
+     {
+         vec3 norm = normalize(vNorm);
+         vec3 diffuse = vec3(0.0,0.0,0.0);
+         vec3 texColor;
+         vec3 lightDir;
+      ''';
+    
+    for (int i=0; i<lightPts.length; i++)
+    fragSrc += '''
+         texColor = lColors['''+i.toString()+'''];
+         lightDir = normalize(lPoints['''+i.toString()+'''] - vPosn);
+         diffuse = diffuse+texColor*dot(lightDir,norm);
+      ''';
+    
+    fragSrc += '''
+         gl_FragColor = vec4(diffuse,1.0);
+    }''';
+    //print(fragSrc);
+    prog = uploadShaderProgram(vertSrc,fragSrc);
+    
+    prepOnState = stateId;  // specify shader code is built based on this state
+    
+    /*  
+          '''
+          precision mediump float;
+          
+          varying vec2 vUV;
+          varying vec3 vNorm;
+          varying vec3 vPosn;
+          
+          uniform float uMaterialShininess;
+          
+          uniform bool uShowSpecularHighlights;
+          uniform bool uUseLighting;
+          uniform bool uUseTextures;
+          
+          uniform vec3 uAmbientColor;
+          
+          uniform vec3 uPointLightingLocation;
+          uniform vec3 uPointLightingSpecularColor;
+          uniform vec3 uPointLightingDiffuseColor;
+          
+          uniform sampler2D uSampler;
+          
+          
+          void main(void) {
+              vec3 lightWeighting;
+              if (!uUseLighting) {
+                  lightWeighting = vec3(1.0, 1.0, 1.0);
+              } else {
+                  vec3 lightDirection = normalize(uPointLightingLocation - vPosn.xyz);
+                  vec3 normal = normalize(vNorm);
+          
+                  float specularLightWeighting = 0.0;
+                  if (uShowSpecularHighlights) {
+                      vec3 eyeDirection = normalize(-vPosn.xyz);
+                      vec3 reflectionDirection = reflect(-lightDirection, normal);
+          
+                      specularLightWeighting = pow(max(dot(reflectionDirection, eyeDirection), 0.0), uMaterialShininess);
+                  }
+          
+                  float diffuseLightWeighting = max(dot(normal, lightDirection), 0.0);
+                  lightWeighting = uAmbientColor
+                      + uPointLightingSpecularColor * specularLightWeighting
+                      + uPointLightingDiffuseColor * diffuseLightWeighting;
+              }
+          
+              vec4 fragmentColor;
+              if (uUseTextures) {
+                  fragmentColor = texture2D(uSampler, vec2(vUV.s, vUV.t));
+              } else {
+                  fragmentColor = vec4(1.0, 1.0, 1.0, 1.0);
+              }
+              gl_FragColor = vec4(fragmentColor.rgb * lightWeighting, fragmentColor.a);
+          }
+        ''';
+        */
+  }//endfunction
   
   /**
    * adds given mesh to this render tree
@@ -180,9 +215,20 @@ class Mesh
   }//endfunction
   
   /**
+   * to return as a flattened list the children and grandchildrens of this mesh, self included
+   */
+  void flattenTree(Matrix4 T,List<Mesh> L)
+  {
+    _workingT = T.mult(transform); // working transform of this mesh
+    L.add(this);
+    for (int i=childMeshes.length-1; i>-1; i--)
+      childMeshes[i].flattenTree(_workingT,L);
+  }//endfunction
+  
+  /**
    * renders the given mesh tree
    */
-  static void render(RenderingContext gl,Mesh m,int viewWidth, int viewHeight, double aspect) 
+  static void render(RenderingContext gl,Mesh tree,int viewWidth, int viewHeight, double aspect) 
   {
     gl.clearColor(0.0, 0.0, 0.0, 1.0);  // clear color and alpha
     
@@ -192,49 +238,54 @@ class Mesh
     gl.enable(DEPTH_TEST);
     gl.enable(BLEND);
     
-    pMatrix = Matrix4.perspective(45.0, aspect, 0.1, 100.0);  // hardcoded perspective matrix
-           
-    // Here's that bindBuffer() again, as seen in the constructor
-    gl.bindBuffer(ELEMENT_ARRAY_BUFFER, m.idxBuffer);   // bind index buffer
-    gl.bindBuffer(ARRAY_BUFFER, m.vertBuffer);          // bind vertex buffer
-    int aLoc = gl.getAttribLocation(m.prog, 'aPosn');
-    gl.enableVertexAttribArray(aLoc);
-    gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 8*4, 0);
-    aLoc = gl.getAttribLocation(m.prog, 'aNorm');
-    gl.enableVertexAttribArray(aLoc);
-    gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 8*4, 3*4);
-    aLoc = gl.getAttribLocation(m.prog, 'aUV');
-    gl.enableVertexAttribArray(aLoc);
-    gl.vertexAttribPointer(aLoc, 2, FLOAT, false, 8*4, 6*4);
-    gl.uniformMatrix4fv(gl.getUniformLocation(m.prog, 'uPMatrix'), false, pMatrix.buf());
-    gl.uniformMatrix4fv(gl.getUniformLocation(m.prog, 'uMVMatrix'), false, viewT.mult(m.transform).buf());
-    /*
-    Float32List lPs = new Float32List(lightPts.length*3);   // light positions
-    Float32List lCs = new Float32List(lightPts.length*3);   // light colors
+    // ----- calculate lighting info 
+    Float32List lPs = new Float32List(lightPts.length*3);     // light positions
+    Float32List lCs = new Float32List(lightPts.length*3);     // light colors
     for (int i=lightPts.length-1; i>-1; i--)
     {
       PointLight lpt = lightPts[i];
-      /*
       lPs[i*3+0] = lpt.px*viewT.aa+lpt.py*viewT.ab+lpt.pz*viewT.ac+viewT.ad;  // transformed lightPt x
       lPs[i*3+1] = lpt.px*viewT.ba+lpt.py*viewT.bb+lpt.pz*viewT.bc+viewT.bd;  // transformed lightPt y
       lPs[i*3+2] = lpt.px*viewT.ca+lpt.py*viewT.cb+lpt.pz*viewT.cc+viewT.cd;  // transformed lightPt z
-      */
-      lPs[i*3+0] = lpt.px;
-      lPs[i*3+1] = lpt.py;
-      lPs[i*3+2] = lpt.pz;
       lCs[i*3+0] = lpt.r;
       lCs[i*3+1] = lpt.g;
       lCs[i*3+2] = lpt.b;
-    }*/
-    PointLight lpt = lightPts[0];
-    //gl.uniform3fv(gl.getUniformLocation(m.prog, 'lPoints['+lightPts.length.toString()+']'),new Float32List.fromList([lpt.px,lpt.py,lpt.pz]));
-    //gl.uniform3fv(gl.getUniformLocation(m.prog, 'lColors['+lightPts.length.toString()+']'),new Float32List.fromList([lpt.r,lpt.g,lpt.b]));
-    gl.uniform3f(gl.getUniformLocation(m.prog, 'lPoint'),lpt.px,lpt.py,lpt.pz);
-    gl.uniform3f(gl.getUniformLocation(m.prog, 'lColor'),lpt.r,lpt.g,lpt.b);
+    }//endfor
+    
+    List<Mesh> Mshs = new List<Mesh>();
+    tree.flattenTree(viewT,Mshs);
+    
+    for (int i=Mshs.length-1; i>-1; i--)
+    {
+      Mesh m=Mshs[i];   // current mesh to render
+      if (m.idxBuffer!=null && m.vertBuffer!=null)
+      {
+        if (m.prepOnState!=stateId) m.prepareForRender();         // recompile shader code if state changed
         
-    gl.uniformMatrix4fv(gl.getUniformLocation(m.prog, 'uMVMatrix'), false, viewT.mult(m.transform).buf());
-    gl.drawArrays(TRIANGLES, 0, m.numTris*3);
-    //gl.drawElements(TRIANGLES, m.numTris*3, UNSIGNED_SHORT, 0);
+        gl.useProgram(m.prog);                                    // set shader program
+        gl.bindBuffer(ELEMENT_ARRAY_BUFFER, m.idxBuffer);         // bind index buffer
+        gl.bindBuffer(ARRAY_BUFFER, m.vertBuffer);                // bind vertex buffer
+        int aLoc = gl.getAttribLocation(m.prog, 'aPosn');
+        gl.enableVertexAttribArray(aLoc);
+        gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 8*4, 0);    // specify vertex
+        aLoc = gl.getAttribLocation(m.prog, 'aNorm');
+        gl.enableVertexAttribArray(aLoc);
+        gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 8*4, 3*4);  // specify normal
+        aLoc = gl.getAttribLocation(m.prog, 'aUV');
+        gl.enableVertexAttribArray(aLoc);
+        gl.vertexAttribPointer(aLoc, 2, FLOAT, false, 8*4, 6*4);  // specify UV
+        
+        gl.uniformMatrix4fv(gl.getUniformLocation(m.prog, 'uPMatrix'), false, persT.buf());
+        gl.uniformMatrix4fv(gl.getUniformLocation(m.prog, 'uMVMatrix'), false, m._workingT.buf());
+        
+        gl.uniform3fv(gl.getUniformLocation(m.prog, 'lPoints'),lPs);  // upload light posns
+        gl.uniform3fv(gl.getUniformLocation(m.prog, 'lColors'),lCs);  // upload light colors
+        
+        gl.drawArrays(TRIANGLES, 0, m.numTris*3);
+        //gl.drawElements(TRIANGLES, m.numTris*3, UNSIGNED_SHORT, 0);
+      }//endif
+    }//endfor
+    
   }//endfunction
   
   /**
@@ -277,9 +328,13 @@ class Mesh
     return camT.scale(1.0,1.0,1.0); // duplicate and return
   }//endfunction
   
+  /**
+   * sets point lights positions and colors
+   */
   static void setLights(List<PointLight> lights)
   {
-    
+    if (lightPts.length!=lights.length) stateId++; // to trigger recompile of shader codes
+    lightPts=lights;
   }//endfunction
   
   /**
@@ -345,6 +400,14 @@ class Mesh
                     U[(i*2)%ul+4],U[(i*2)%ul+5]]);
     }
     return new Mesh(VData);
+  }//endfunction
+    
+  /**
+   * Return 
+   */
+  static void loadObj(String url,handle(Mesh m)) 
+  {
+    HttpRequest.getString(url).then((String s) {handle(Mesh.parseObj(s));});
   }//endfunction
     
   /**
