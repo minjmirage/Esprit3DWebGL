@@ -7,7 +7,7 @@ import 'matrix4.dart';
 CanvasElement canvas = querySelector("#glCanvas");
 RenderingContext gl;
 Matrix4 pMatrix;
-Mesh cube;
+Mesh scene;
 
 void main() 
 {
@@ -16,10 +16,20 @@ void main()
   gl = canvas.getContext3d();
   if (gl == null) return;
 
-  Mesh.loadObj('tyre.obj', (Mesh m) {
-     cube = m;
-     tick(0.0);
-  });
+  scene = new Mesh();
+  
+  Mesh itm = Mesh.createTetra();
+  scene.addChild(itm);
+  itm = Mesh.createTorus(0.5,0.2);
+  itm.transform = itm.transform.translate(sin(0), 0.0, cos(0));
+  scene.addChild(itm);
+  itm = Mesh.createSphere(0.5);
+  itm.transform = itm.transform.translate(sin(PI*2/3), 0.0, cos(PI*2/3));
+  scene.addChild(itm);
+  itm = Mesh.createCube(1.0,1.0,1.0);
+  itm.transform = itm.transform.translate(sin(PI*4/3), 0.0, cos(PI*4/3));
+  scene.addChild(itm);
+  tick(0.0);
 }//endmain
 
 tick(double time) 
@@ -34,7 +44,7 @@ tick(double time)
                   new PointLight(10.0*sin(time/500+PI*4/3),0.0,10.0*cos(time/500+PI*4/3),0.0,0.0,1.0)]);
   Mesh.setCamera(r*cos(sinT)*sin(time/1000), r*sin(sinT), r*cos(sinT)*cos(time/1000), 0.0,0.0,0.0);
   
-  Mesh.render(gl,cube,800, 600, 800 / 600);
+  Mesh.render(gl,scene,800, 600, 800 / 600);
 }
 
 
@@ -268,12 +278,12 @@ class Mesh
         int aLoc = gl.getAttribLocation(m.prog, 'aPosn');
         gl.enableVertexAttribArray(aLoc);
         gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 8*4, 0);    // specify vertex
-        aLoc = gl.getAttribLocation(m.prog, 'aNorm');
-        gl.enableVertexAttribArray(aLoc);
-        gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 8*4, 3*4);  // specify normal
         aLoc = gl.getAttribLocation(m.prog, 'aUV');
         gl.enableVertexAttribArray(aLoc);
-        gl.vertexAttribPointer(aLoc, 2, FLOAT, false, 8*4, 6*4);  // specify UV
+        gl.vertexAttribPointer(aLoc, 2, FLOAT, false, 8*4, 3*4);  // specify UV
+        aLoc = gl.getAttribLocation(m.prog, 'aNorm');
+        gl.enableVertexAttribArray(aLoc);
+        gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 8*4, 5*4);  // specify normal
         
         gl.uniformMatrix4fv(gl.getUniformLocation(m.prog, 'uPMatrix'), false, persT.buf());
         gl.uniformMatrix4fv(gl.getUniformLocation(m.prog, 'uMVMatrix'), false, m._workingT.buf());
@@ -351,6 +361,70 @@ class Mesh
   }//endfunction
   
   /**
+   * creates a texture tetra from given square texture
+   */
+  static Mesh createTetra([double l=1.0,bool soft=true])
+  {
+    // ----- front point
+    double ax = 0.0;
+    double ay = l/2/sqrt(3)*2;
+    double az = 0.0;
+    
+    // ----- back left point
+    double bx =-l/2;
+    double by =-l/2/sqrt(3);
+    double bz = 0.0;
+    
+    // ----- back right point
+    double cx = l/2;
+    double cy =-l/2/sqrt(3);
+    double cz = 0.0;
+    
+    // ----- top point
+    double dx = 0.0;
+    double dy = 0.0;
+    double dz = sqrt( l*l/4*3 - cy*cy );
+    
+    az-=l-dz;
+    bz-=l-dz;
+    cz-=l-dz;
+    dz-=l-dz;
+    
+    List<double> VData = new List<double>();
+    if (soft)
+    {
+      VData.addAll([ax,ay,az, 1/2,1-1/2/sqrt(3), ax,ay,az,
+                    cx,cy,cz, 0.0,1.0,           cx,cy,cz,
+                    bx,by,bz, 1.0,1.0,           bx,by,bz]);
+      VData.addAll([dx,dy,dz, 1/2,1-1/2/sqrt(3), dx,dy,dz,
+                    ax,ay,az, 0.0,1.0,           ax,ay,az,
+                    bx,by,bz, 1.0,1.0,           bx,by,bz]);
+      VData.addAll([dx,dy,dz, 1/2,1-1/2/sqrt(3), dx,dy,dz,
+                    cx,cy,cz, 0.0,1.0,           cx,cy,cz,
+                    ax,ay,az, 1.0,1.0,           ax,ay,az]);
+      VData.addAll([dx,dy,dz, 1/2,1-1/2/sqrt(3), dx,dy,dz,
+                    bx,by,bz, 0.0,1.0,           bx,by,bz,
+                    cx,cy,cz, 1.0,1.0,           cx,cy,cz]);
+    }
+    else
+    {
+      VData.addAll([ax,ay,az, 1/2,1-1/2/sqrt(3), 0.0,0.0,0.0,  
+                    cx,cy,cz, 0.0,1.0,           0.0,0.0,0.0,  
+                    bx,by,bz, 1.0,1.0,           0.0,0.0,0.0]);
+      VData.addAll([dx,dy,dz, 1/2,1-1/2/sqrt(3), 0.0,0.0,0.0,
+                    ax,ay,az, 0.0,1.0,           0.0,0.0,0.0,
+                    bx,by,bz, 1.0,1.0,           0.0,0.0,0.0]);
+      VData.addAll([dx,dy,dz, 1/2,1-1/2/sqrt(3), 0.0,0.0,0.0,
+                    cx,cy,cz, 0.0,1.0,           0.0,0.0,0.0,
+                    ax,ay,az, 1.0,1.0,           0.0,0.0,0.0]);
+      VData.addAll([dx,dy,dz, 1/2,1-1/2/sqrt(3), 0.0,0.0,0.0,
+                    bx,by,bz, 0.0,1.0,           0.0,0.0,0.0,
+                    cx,cy,cz, 1.0,1.0,           0.0,0.0,0.0]);
+    }
+    return new Mesh(VData);
+  }//endfunction
+  
+  /**
    * creates a cuboid of specified dimensions
    */
   static Mesh createCube([double w=1.0,double h=1.0,double d=1.0,bool soft=true])
@@ -377,33 +451,183 @@ class Mesh
     {
       for (i=0; i<I.length; i+=3)
       VData.addAll([V[I[i+0]*3+0],V[I[i+0]*3+1],V[I[i+0]*3+2],  // vertex a
-                    V[I[i+0]*3+0],V[I[i+0]*3+1],V[I[i+0]*3+2],  // normal a
                     U[(i*2)%ul+0],U[(i*2)%ul+1],
+                    V[I[i+0]*3+0],V[I[i+0]*3+1],V[I[i+0]*3+2],  // normal a
                     V[I[i+1]*3+0],V[I[i+1]*3+1],V[I[i+1]*3+2],  // vertex b
-                    V[I[i+1]*3+0],V[I[i+1]*3+1],V[I[i+1]*3+2],  // normal b
                     U[(i*2)%ul+2],U[(i*2)%ul+3],
+                    V[I[i+1]*3+0],V[I[i+1]*3+1],V[I[i+1]*3+2],  // normal b
                     V[I[i+2]*3+0],V[I[i+2]*3+1],V[I[i+2]*3+2],  // vertex c
-                    V[I[i+2]*3+0],V[I[i+2]*3+1],V[I[i+2]*3+2],  // normal c
-                    U[(i*2)%ul+4],U[(i*2)%ul+5]]);
+                    U[(i*2)%ul+4],U[(i*2)%ul+5],
+                    V[I[i+2]*3+0],V[I[i+2]*3+1],V[I[i+2]*3+2]]);// normal c
     }
     else
     {
       for (i=0; i<I.length; i+=3)
       VData.addAll([V[I[i+0]*3+0],V[I[i+0]*3+1],V[I[i+0]*3+2],  // vertex a
-                    0,0,0,  // normal a
                     U[(i*2)%ul+0],U[(i*2)%ul+1],
+                    0,0,0,  // normal a
                     V[I[i+1]*3+0],V[I[i+1]*3+1],V[I[i+1]*3+2],  // vertex b
-                    0,0,0,  // normal b
                     U[(i*2)%ul+2],U[(i*2)%ul+3],
+                    0,0,0,  // normal b
                     V[I[i+2]*3+0],V[I[i+2]*3+1],V[I[i+2]*3+2],  // vertex c
-                    0,0,0,  // normal c
-                    U[(i*2)%ul+4],U[(i*2)%ul+5]]);
+                    U[(i*2)%ul+4],U[(i*2)%ul+5],
+                    0,0,0]); // normal c
     }
     return new Mesh(VData);
   }//endfunction
-    
+  
   /**
-   * Return 
+   * creates a sphere of radius r
+   */
+  static Mesh createSphere(double r,[int lon=32,int lat=16,bool soft=true])
+  {
+    List<double> S = new List<double>();
+    int i=0;
+    while (i<lat)
+    {
+      double sinL0 = sin(PI*i/lat);
+      double sinL1 = sin(PI*(i+1)/lat);
+      double cosL0 = cos(PI*i/lat);
+      double cosL1 = cos(PI*(i+1)/lat);
+      List<double> A = createTrianglesBand(sinL0*r,sinL1*r,-cosL0*r,-cosL1*r,lon,soft);
+      
+      // ----- adjust UVs of mesh to wrap entire sphere instead
+      for (int j=0; j<A.length; j+=8) 
+      {
+        A[j+4]=i/lat+A[j+4]/lat;
+        if (soft)
+        { // recalculate normals
+          double nx = A[j+0];
+          double ny = A[j+1];
+          double nz = A[j+2];
+          double nl = sqrt(nx*nx+ny*ny+nz*nz);
+          nx/=nl; ny/=nl; nz/=nl;
+          A[j+5]=nx; A[j+6]=ny; A[j+7]=nz;
+        }
+      }
+      S.addAll(A);
+      i++;
+    }//endfor
+    
+    Mesh M = new Mesh(S);
+    //M.compressGeometry();
+    return M;
+  }//endfunction
+  
+  /**
+  * create a doughnut shape with band radius r1, thickness r2, of m segments and made of n cylinders
+  */
+  static Mesh createTorus(double r1,double r2,[int m=32,int n=8,bool soft=true])
+  {
+    List<double> T = new List<double>();
+    int i=0;
+    while (i<n)
+    {
+      List<double> A = createTrianglesBand( r1-r2*cos(i/n*PI*2),
+                                            r1-r2*cos((i+1)/n*PI*2),
+                                            -r2*sin(i/n*PI*2),
+                                            -r2*sin((i+1)/n*PI*2),
+                                            m,soft);
+      
+      // ----- adjust UVs of mesh to wrap entire torus instead
+      List<int> F = [0,0,1,1,0,1];
+      for (int j=0; j<A.length; j+=8) 
+      {
+        A[j+7]=i/n+A[j+7]/n;
+        if (soft)
+        { // 112212
+          int stp = F[(j/8).floor()%6]; // step +1 or step
+          int lon = (j/48).floor();     // current longitude
+          double ang = (lon+stp)/m*PI*2;
+          double cx = r1*sin(ang);
+          double cy = r1*cos(ang);
+          double cz = 0.0;
+          double nx = A[j+0]-cx;
+          double ny = A[j+1]-cy;
+          double nz = A[j+2]-cz;
+          double nl = sqrt(nx*nx+ny*ny+nz*nz);
+          nx/=nl; ny/=nl; nz/=nl;
+                      
+          A[j+5]=nx; A[j+6]=ny; A[j+7]=nz;  // override normals
+        }
+      }
+      T.addAll(A);
+      i++;
+    }//endfunction
+    
+    Mesh M = new Mesh(T);
+    //M.compressGeometry();
+    return M;
+  }//endfunction
+  
+  /**
+  * creates a circular band of triangles of specified r1,r2 z1,z2
+  */
+  static List<double> createTrianglesBand(double r1,double r2,double z1,double z2,int n,[bool soft=true])
+  {
+    List<double> A = new List<double>();
+    int i=0;
+    while (i<n)
+    {
+      double a1 = i/n*PI*2;
+      double a2 = (i+1)/n*PI*2;
+      
+      double sin_a1 = sin(a1);
+      double sin_a2 = sin(a2);
+      double cos_a1 = cos(a1);
+      double cos_a2 = cos(a2);
+              
+      if (soft) // apply Smooth Shading
+      {
+        double mz = (z1+z2)/2;
+        if (r2>0) A.addAll([sin_a1*r1,cos_a1*r1,z1, // vertex
+                            i/n,0.0,
+                            sin_a1*r1,cos_a1*r1,z1, // normal
+                            sin_a1*r2,cos_a1*r2,z2, // vertex
+                            i/n,1.0,
+                            sin_a1*r2,cos_a1*r2,z2, // normal
+                            sin_a2*r2,cos_a2*r2,z2, // vertex
+                            (i+1)/n,1.0,
+                            sin_a2*r2,cos_a2*r2,z2]);// normal                      
+        if (r1>0) A.addAll([sin_a2*r1,cos_a2*r1,z1, // vertex
+                            (i+1)/n,0.0,
+                            sin_a2*r1,cos_a2*r1,z1, // normal
+                            sin_a1*r1,cos_a1*r1,z1, // vertex
+                            i/n,0.0,
+                            sin_a1*r1,cos_a1*r1,z1, // normal
+                            sin_a2*r2,cos_a2*r2,z2, // vertex
+                            (i+1)/n,1.0,
+                            sin_a2*r2,cos_a2*r2,z2]);// normal
+      }
+      else
+      {
+        if (r2>0) A.addAll([sin_a1*r1,cos_a1*r1,z1, // vertex
+                            i/n,0.0,
+                            0.0,0.0,0.0,            // normal
+                            sin_a1*r2,cos_a1*r2,z2, // vertex
+                            i/n,1,
+                            0.0,0.0,0.0,            // normal
+                             sin_a2*r2,cos_a2*r2,z2,// vertex
+                            (i+1)/n,1,
+                            0.0,0.0,0.0]);          // normal
+        if (r1>0) A.addAll([sin_a2*r1,cos_a2*r1,z1, // vertex
+                            (i+1)/n,0.0,
+                            0.0,0.0,0.0,            // normal
+                            sin_a1*r1,cos_a1*r1,z1, // vertex
+                            i/n,0.0,
+                            0.0,0.0,0.0,            // normal
+                            sin_a2*r2,cos_a2*r2,z2, // vertex
+                            (i+1)/n,1.0,
+                            0.0,0.0,0.0]);          // normal
+      }
+      i++;
+    }//endfor
+    
+    return A;
+  }//endfunction
+      
+  /**
+   * Callbacks with parsed obj m as parameter 
    */
   static void loadObj(String url,handle(Mesh m)) 
   {
@@ -590,9 +814,9 @@ class Mesh
               vc = 1-T[A[7]*2+1];
             }
             
-            verticesData.addAll([ vax,vay,vaz, nax,nay,naz, ua,va,
-                                  vbx,vby,vbz, nbx,nby,nbz, ub,vb,
-                                  vcx,vcy,vcz, ncx,ncy,ncz, uc,vc]);
+            verticesData.addAll([ vax,vay,vaz, ua,va, nax,nay,naz,
+                                  vbx,vby,vbz, ub,vb, nbx,nby,nbz, 
+                                  vcx,vcy,vcz, uc,vc, ncx,ncy,ncz]);
                       
             f.removeAt(1);
           }//endwhile
