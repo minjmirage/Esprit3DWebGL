@@ -3,6 +3,7 @@ import 'dart:web_gl';
 import 'dart:typed_data';
 import 'dart:math';
 import 'matrix4.dart';
+import 'dart:async';
 
 CanvasElement canvas = querySelector("#glCanvas");
 RenderingContext gl;
@@ -29,7 +30,9 @@ void main()
   itm = Mesh.createCube(1.0,1.0,1.0);
   itm.transform = itm.transform.translate(sin(PI*4/3), 0.0, cos(PI*4/3));
   scene.addChild(itm);
-  tick(0.0);
+  
+  ImageElement diffImg = new ImageElement(src:"weaveDiff.jpg");
+  diffImg.onLoad.listen((dat) {scene.setTexture(diffImg,true);  tick(0.0);});
 }//endmain
 
 tick(double time) 
@@ -56,6 +59,9 @@ class Mesh
   Program prog;           // the render program for this mesh
   Buffer vertBuffer;      // uploaded vertices data to GPU
   Buffer idxBuffer;       // uploaded indices data to GPU
+  Texture diffMap;        // diffuse map
+  Texture normMap;        // normals map
+  Texture specMap;        // specular strength map
   List<Mesh> childMeshes; // list of children
   Matrix4 transform;      // transform for this mesh
   Matrix4 _workingT;      // used for rendering 
@@ -126,35 +132,31 @@ class Mesh
     ''';
     
     // ----- construct fragment shader source -----------
-    String fragSrc = '''
-     precision highp float;
-     
-     varying vec2 vUV;
-     varying vec3 vNorm;
-     varying vec3 vPosn;
-     
-     uniform vec3 lPoints['''+lightPts.length.toString()+'''];
-     uniform vec3 lColors['''+lightPts.length.toString()+'''];
-     
-     void main(void) 
-     {
-         vec3 norm = normalize(vNorm);
-         vec3 diffuse = vec3(0.0,0.0,0.0);
-         vec3 texColor;
-         vec3 lightDir;
-      ''';
+    String fragSrc ="precision highp float;\n"+
+                    "varying vec2 vUV;\n"+
+                    "varying vec3 vNorm;\n"+
+                    "varying vec3 vPosn;\n"+
+                    "uniform vec3 lPoints["+lightPts.length.toString()+"];\n"+
+                    "uniform vec3 lColors["+lightPts.length.toString()+"];\n";
+    if (diffMap!=null) fragSrc += "uniform sampler2D diffMap;\n";
+    if (normMap!=null) fragSrc += "uniform sampler2D normMap;\n";
+    if (specMap!=null) fragSrc += "uniform sampler2D specMap;\n";
     
+    fragSrc+= "void main(void) {\n"+
+              "   vec3 norm = normalize(vNorm);\n"+
+              "   vec4 accu = vec4(0.0,0.0,0.0,0.0);\n"+
+              "   vec3 color;\n"+     // working var
+              "   vec3 lightDir;\n\n";  // working var
+    if (diffMap!=null) fragSrc += "   vec4 texColor = texture2D(diffMap, vUV);\n";
+    else               fragSrc += "   vec4 texColor = vec4(1.0,1.0,1.0,1.0);\n";
     for (int i=0; i<lightPts.length; i++)
-    fragSrc += '''
-         texColor = lColors['''+i.toString()+'''];
-         lightDir = normalize(lPoints['''+i.toString()+'''] - vPosn);
-         diffuse = diffuse+texColor*dot(lightDir,norm);
-      ''';
+    fragSrc +="   color = lColors["+i.toString()+"] * texColor.xyz;\n"+  // color = lightColor*texColor
+              "   lightDir = normalize(lPoints["+i.toString()+"] - vPosn);\n"+
+              "   color = color*dot(lightDir,norm);\n"+
+              "   accu = max(accu,vec4(color, texColor.a));\n";
     
-    fragSrc += '''
-         gl_FragColor = vec4(diffuse,1.0);
-    }''';
-    //print(fragSrc);
+    fragSrc += "   gl_FragColor = accu;\n}";
+    print(fragSrc);
     prog = uploadShaderProgram(vertSrc,fragSrc);
     
     prepOnState = stateId;  // specify shader code is built based on this state
@@ -236,6 +238,60 @@ class Mesh
   }//endfunction
   
   /**
+   * sets the diffuse texture for this mesh
+   */
+  void setTexture(ImageElement img,[bool propagate=false])
+  {
+    diffMap = createMipMapTexture(img);
+    if (propagate)
+      for (int i=childMeshes.length-1; i>-1; i--)
+        childMeshes[i].setTexture(img,propagate);
+  }//endfunction
+  
+  /**
+   * sets the normal map for this mesh
+   */
+  void setNormalMap(ImageElement img,[bool propagate=false])
+  {
+    normMap = createMipMapTexture(img);
+    if (propagate)
+      for (int i=childMeshes.length-1; i>-1; i--)
+        childMeshes[i].setNormalMap(img,propagate);
+  }//endfunction
+    
+  /**
+   * sets the specular strength map for this mesh
+   */
+  void setSpecularMap(ImageElement img,[bool propagate=false])
+  {
+    specMap = createMipMapTexture(img);
+    if (propagate)
+      for (int i=childMeshes.length-1; i>-1; i--)
+        childMeshes[i].setSpecularMap(img,propagate);
+  }//endfunction
+  
+  /**
+   * creates a texture out of given imageElement
+   */
+  static Map uploadedTextures = new Map();
+  static Texture createMipMapTexture(ImageElement image,[Texture texture=null]) 
+  {
+    if (uploadedTextures.containsKey(image))
+    {
+      return uploadedTextures[image];
+    }
+    if (texture==null) texture = gl.createTexture();
+    gl.pixelStorei(UNPACK_FLIP_Y_WEBGL, 1);
+    gl.bindTexture(TEXTURE_2D, texture);
+    gl.texImage2DImage(TEXTURE_2D, 0, RGBA, RGBA, UNSIGNED_BYTE, image);
+    gl.texParameteri(TEXTURE_2D, TEXTURE_MAG_FILTER, LINEAR);
+    gl.texParameteri(TEXTURE_2D, TEXTURE_MIN_FILTER, LINEAR_MIPMAP_NEAREST);
+    gl.generateMipmap(TEXTURE_2D);
+    uploadedTextures[image] = texture;
+    return texture;
+  }//endfunction
+  
+  /**
    * renders the given mesh tree
    */
   static void render(RenderingContext gl,Mesh tree,int viewWidth, int viewHeight, double aspect) 
@@ -275,6 +331,12 @@ class Mesh
         gl.useProgram(m.prog);                                    // set shader program
         gl.bindBuffer(ELEMENT_ARRAY_BUFFER, m.idxBuffer);         // bind index buffer
         gl.bindBuffer(ARRAY_BUFFER, m.vertBuffer);                // bind vertex buffer
+        if (m.diffMap!=null)
+        {
+          gl.activeTexture(TEXTURE0);
+          gl.bindTexture(TEXTURE_2D, m.diffMap);
+          gl.uniform1i(gl.getUniformLocation(m.prog, 'diffMap'), 0);
+        }
         int aLoc = gl.getAttribLocation(m.prog, 'aPosn');
         gl.enableVertexAttribArray(aLoc);
         gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 8*4, 0);    // specify vertex
