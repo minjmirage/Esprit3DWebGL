@@ -166,12 +166,55 @@ class Mesh
     // ----- upload vertex data to buffer
     if (vertData!=null)
     {
-      numTris = vertData.length~/24;
-      if (idxData==null) idxData = new List<int>();
-      for (int i=0; i<numTris*3; i++)  idxData.add(i);
+      if (idxData==null) 
+      {
+        numTris = vertData.length~/24;
+        idxData = new List<int>();
+        for (int i=0; i<numTris*3; i++)  idxData.add(i);
+      }
+      else
+        numTris = idxData.length~/3;
+      
+      // ----- calc default normals to data if normals are 0,0,0 ----
+      for (int i=0; i<numTris; i++) 
+      {
+         int i0=idxData[i*3+0]*8;
+         int i1=idxData[i*3+1]*8;
+         int i2=idxData[i*3+2]*8;
+                
+         if ((vertData[i0+5]==0 && vertData[i0+6]==0 && vertData[i0+7]==0) ||
+             (vertData[i1+5]==0 && vertData[i1+6]==0 && vertData[i1+7]==0) ||
+             (vertData[i2+5]==0 && vertData[i2+6]==0 && vertData[i2+7]==0))
+         {
+           // ----- calculate default normals ------------------------
+           double vax = vertData[i0+0];
+           double vay = vertData[i0+1];
+           double vaz = vertData[i0+2];
+           double px = vertData[i1+0] - vax;
+           double py = vertData[i1+1] - vay;
+           double pz = vertData[i1+2] - vaz;
+           double qx = vertData[i2+0] - vax;
+           double qy = vertData[i2+1] - vay;
+           double qz = vertData[i2+2] - vaz;
+           // normal by determinant
+           double nx = py*qz-pz*qy; //  unit normal x for the triangle
+           double ny = pz*qx-px*qz; //  unit normal y for the triangle
+           double nz = px*qy-py*qx; //  unit normal z for the triangle
+           double nl = sqrt(nx*nx+ny*ny+nz*nz);
+           nx/=nl; ny/=nl; nz/=nl;
+           vertData[i0+5]=nx; vertData[i0+6]=ny; vertData[i0+7]=nz;
+           vertData[i1+5]=nx; vertData[i1+6]=ny; vertData[i1+7]=nz;
+           vertData[i2+5]=nx; vertData[i2+6]=ny; vertData[i2+7]=nz;
+         }
+      }
     }//endif
 
-    if (vertData==null || idxData==null || gl==null) {prog=null; return;}
+    if (vertData==null || idxData==null || gl==null) 
+    {
+      numTris=0;
+      prog=null; 
+      return;
+    }
 
     idxBuffer = gl.createBuffer();
     gl.bindBuffer(ELEMENT_ARRAY_BUFFER, idxBuffer);
@@ -389,8 +432,8 @@ class Mesh
         gl.uniform3fv(gl.getUniformLocation(m.prog, 'lPoints'),lPs);  // upload light posns
         gl.uniform3fv(gl.getUniformLocation(m.prog, 'lColors'),lCs);  // upload light colors
 
-        gl.drawArrays(TRIANGLES, 0, m.numTris*3);
-        //gl.drawElements(TRIANGLES, m.numTris*3, UNSIGNED_SHORT, 0);
+        //gl.drawArrays(TRIANGLES, 0, m.numTris*3);
+        gl.drawElements(TRIANGLES, m.numTris*3, UNSIGNED_SHORT, 0);
       }//endif
     }//endfor
 
@@ -640,7 +683,7 @@ class Mesh
                     cx,cy,cz, 1.0,1.0,           0.0,0.0,0.0]);
     }
     Mesh M = new Mesh(VData);
-    //if (soft) M.compressGeometry();
+    if (soft) M.compressGeometry();
     return M;
   }//endfunction
 
@@ -694,7 +737,7 @@ class Mesh
                     0.0,0.0,0.0]); // normal c
     }
     Mesh M = new Mesh(VData);
-    //if (soft) M.compressGeometry();
+    if (soft) M.compressGeometry();
     return M;
   }//endfunction
 
@@ -732,7 +775,7 @@ class Mesh
     }//endfor
 
     Mesh M = new Mesh(S);
-    //if (soft) M.compressGeometry();
+    if (soft) M.compressGeometry();
     return M;
   }//endfunction
 
@@ -778,7 +821,7 @@ class Mesh
     }//endfunction
 
     Mesh M = new Mesh(T);
-    //if (soft) M.compressGeometry();
+    if (soft) M.compressGeometry();
     return M;
   }//endfunction
 

@@ -17,7 +17,7 @@ void main()
 
   scene = new Mesh();
 
-  Mesh itm = Mesh.createTetra();
+  Mesh itm = Mesh.createTetra(1.0,false);
   scene.addChild(itm);
   itm = Mesh.createTorus(0.5,0.2);
   itm.transform = itm.transform.translate(sin(0), 0.0, cos(0));
@@ -25,7 +25,7 @@ void main()
   itm = Mesh.createSphere(0.5);
   itm.transform = itm.transform.translate(sin(PI*2/3), 0.0, cos(PI*2/3));
   scene.addChild(itm);
-  itm = Mesh.createCube(1.0,1.0,1.0);
+  itm = Mesh.createCube(1.0,1.0,1.0,false);
   itm.transform = itm.transform.translate(sin(PI*4/3), 0.0, cos(PI*4/3));
   scene.addChild(itm);
 
@@ -34,7 +34,7 @@ void main()
         scene.setTexture(Texs[0],true);
         scene.setNormalMap(Texs[1],true);
         scene.setSpecularMap(Texs[2],true);
-        Mesh cube = Mesh.createCube(-13.0,-13.0,-13.0,true);
+        Mesh cube = Mesh.createCube(-13.0,-13.0,-13.0,false);
         cube.setTexture(Texs[3]);
         cube.setNormalMap(Texs[4]);
         cube.setSpecularMap(Texs[5]);
