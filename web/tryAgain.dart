@@ -30,21 +30,44 @@ void main()
   itm.transform = itm.transform.translate(sin(PI*4/3), 0.0, cos(PI*4/3));
   scene.addChild(itm);
 
-  ImageElement diffImg = new ImageElement(src:"weaveDiff.jpg");
-  diffImg.onLoad.listen((dat) {scene.setTexture(diffImg,true);  tick(0.0);});
+  loadImgs(["weaveDiff.jpg","weaveNorm.jpg","weaveSpec.jpg"],(List<ImageElement> Texs)
+      {
+        scene.setTexture(Texs[0],true);
+        scene.setNormalMap(Texs[1],true);
+        scene.setSpecularMap(Texs[2],true);
+        tick(0.0);  // start main loop!
+      });
 }//endmain
+
+/**
+ * convenience function to load a list of images
+ */
+void loadImgs(List<String> URLs,callBack(List<ImageElement> Texs),[List<ImageElement> Texs=null])
+{
+  if (Texs==null) Texs=new List<ImageElement>();
+  print("Loading "+Texs.length.toString()+" : "+URLs[Texs.length]);
+  ImageElement img = new ImageElement(src:URLs[Texs.length]);
+  img.onLoad.listen((dat)
+      {
+        Texs.add(img);
+        if (Texs.length<URLs.length)
+          loadImgs(URLs,callBack,Texs);
+        else
+          callBack(Texs);
+      });
+}//endfunction
 
 tick(double time)
 {
   window.animationFrame.then(tick);
   print("time:"+time.toString());
-  double r = 10.0+5*sin(time/500);
+  double r = 5+sin(time/500);
   double sinT = sin(sin(time/1000));
 
-  Mesh.setLights([new PointLight(10.0*sin(time/500),0.0,10.0*cos(time/500),1.0,0.0,0.0),
-                  new PointLight(10.0*sin(time/500+PI*2/3),0.0,10.0*cos(time/500+PI*2/3),0.0,1.0,0.0),
-                  new PointLight(10.0*sin(time/500+PI*4/3),0.0,10.0*cos(time/500+PI*4/3),0.0,0.0,1.0)]);
-  Mesh.setCamera(r*cos(sinT)*sin(time/1000), r*sin(sinT), r*cos(sinT)*cos(time/1000), 0.0,0.0,0.0);
+  Mesh.setLights([new PointLight(10.0*sin(time/500),0.0,10.0*cos(time/500),1.0,1.0,1.0)]);
+                 // new PointLight(10.0*sin(time/500+PI*2/3),0.0,10.0*cos(time/500+PI*2/3),1.0,0.0,1.0),
+                 // new PointLight(10.0*sin(time/500+PI*4/3),0.0,10.0*cos(time/500+PI*4/3),0.0,1.0,1.0)]);
+  Mesh.setCamera(r*cos(sinT/10)*sin(time/5000), r*sin(sinT/10), r*cos(sinT/10)*cos(time/5000), 0.0,0.0,0.0);
 
   Mesh.render(gl,scene,800, 600, 800 / 600);
 }
@@ -89,16 +112,16 @@ class Mesh
     // ----- upload vertex data to buffer
     if (vertData!=null)
     {
-      vertBuffer = gl.createBuffer();
-      gl.bindBuffer(ARRAY_BUFFER, vertBuffer);
-      gl.bufferDataTyped(ARRAY_BUFFER,new Float32List.fromList(vertData),STATIC_DRAW);
       numTris = vertData.length~/24;
-
       if (idxData==null) idxData = new List<int>();
       for (int i=0; i<numTris*3; i++)  idxData.add(i);
       idxBuffer = gl.createBuffer();
       gl.bindBuffer(ELEMENT_ARRAY_BUFFER, idxBuffer);
       gl.bufferDataTyped(ELEMENT_ARRAY_BUFFER,new Uint16List.fromList(idxData),STATIC_DRAW);
+
+      vertBuffer = gl.createBuffer();
+      gl.bindBuffer(ARRAY_BUFFER, vertBuffer);
+      gl.bufferDataTyped(ARRAY_BUFFER,new Float32List.fromList(calcTangentBasis(idxData,vertData)),STATIC_DRAW);
     }//endif
 
     prepareForRender();
@@ -114,10 +137,12 @@ class Mesh
      attribute vec3 aPosn;
      attribute vec2 aUV;
      attribute vec3 aNorm;
+     attribute vec3 aTang;
      
      varying vec3 vPosn;
      varying vec2 vUV;
      varying vec3 vNorm;
+     varying vec3 vTang;
      
      uniform mat4 uMVMatrix;
      uniform mat4 uPMatrix;
@@ -127,14 +152,16 @@ class Mesh
          gl_Position = uPMatrix * vec4(vPosn, 1.0);
          vUV = aUV;
          vNorm = (uMVMatrix * vec4(aNorm, 0.0)).xyz;
+         vTang = (uMVMatrix * vec4(aTang, 0.0)).xyz;
      }
     ''';
 
     // ----- construct fragment shader source -----------
     String fragSrc ="precision highp float;\n"+
+                    "varying vec3 vPosn;\n"+
                     "varying vec2 vUV;\n"+
                     "varying vec3 vNorm;\n"+
-                    "varying vec3 vPosn;\n"+
+                    "varying vec3 vTang;\n"+
                     "uniform vec3 lPoints["+lightPts.length.toString()+"];\n"+
                     "uniform vec3 lColors["+lightPts.length.toString()+"];\n";
     if (diffMap!=null) fragSrc += "uniform sampler2D diffMap;\n";
@@ -147,8 +174,12 @@ class Mesh
               "   vec3 color;\n"+       // working var
               "   vec3 lightDir;\n"+    // working var
               "   float f = 0.0;\n\n";  // working var
-    if (diffMap!=null) fragSrc += "   vec4 texColor = texture2D(diffMap, vUV);\n";
-    else               fragSrc += "   vec4 texColor = vec4(1.0,1.0,1.0,1.0);\n";
+    if (normMap!=null) fragSrc += "   color = 2.0*texture2D(normMap, vUV).xyz - vec3(1.0,1.0,1.0);\n"+
+                                  "   vec3 tang = normalize(vTang);\n"+
+                                  "   vec3 cota = cross(norm,tang);\n"+
+                                  "   norm = color.x*tang + color.y*cota + color.z*norm;\n\n";
+    if (diffMap!=null) fragSrc += "   vec4 texColor = texture2D(diffMap, vUV);\n\n";
+    else               fragSrc += "   vec4 texColor = vec4(1.0,1.0,1.0,1.0);\n\n";
     for (int i=0; i<lightPts.length; i++)
     {
       String si = i.toString();
@@ -158,11 +189,12 @@ class Mesh
                 "   accu = max(accu,vec4(color*f, texColor.a));\n";     // diffuse shaded color
 
       fragSrc +="   f = dot(lightDir,normalize(vPosn-2.0*dot(vPosn,norm)*norm));\n"+ // spec strength
-                "   f = max(0.0,f*6.0-5.0);\n"+                           // spec strength with hardness
-                "   accu = max(accu,vec4(lColors["+si+"]*f, texColor.a));\n";      // specular refl color
+                "   f = max(0.0,f*6.0-5.0);\n"+                         // spec strength with hardness
+                "   color = f*lColors["+si+"];\n";                      // reflected light intensity
+      if (specMap!=null) fragSrc +="   color = color*texture2D(diffMap, vUV).xyz;\n";
+      fragSrc +="   accu = max(accu,vec4(color, texColor.a));\n";       // specular refl color
     }
     fragSrc += "   gl_FragColor = accu;\n}";
-    print(fragSrc);
     prog = uploadShaderProgram(vertSrc,fragSrc);
 
     prepOnState = stateId;  // specify shader code is built based on this state
@@ -249,6 +281,7 @@ class Mesh
   void setTexture(ImageElement img,[bool propagate=false])
   {
     diffMap = createMipMapTexture(img);
+    prepareForRender();
     if (propagate)
       for (int i=childMeshes.length-1; i>-1; i--)
         childMeshes[i].setTexture(img,propagate);
@@ -260,6 +293,7 @@ class Mesh
   void setNormalMap(ImageElement img,[bool propagate=false])
   {
     normMap = createMipMapTexture(img);
+    prepareForRender();
     if (propagate)
       for (int i=childMeshes.length-1; i>-1; i--)
         childMeshes[i].setNormalMap(img,propagate);
@@ -271,6 +305,7 @@ class Mesh
   void setSpecularMap(ImageElement img,[bool propagate=false])
   {
     specMap = createMipMapTexture(img);
+    prepareForRender();
     if (propagate)
       for (int i=childMeshes.length-1; i>-1; i--)
         childMeshes[i].setSpecularMap(img,propagate);
@@ -342,15 +377,30 @@ class Mesh
           gl.bindTexture(TEXTURE_2D, m.diffMap);
           gl.uniform1i(gl.getUniformLocation(m.prog, 'diffMap'), 0);
         }
+        if (m.normMap!=null)
+        {
+          gl.activeTexture(TEXTURE1);
+          gl.bindTexture(TEXTURE_2D, m.normMap);
+          gl.uniform1i(gl.getUniformLocation(m.prog, 'normMap'), 1);
+        }
+        if (m.specMap!=null)
+        {
+          gl.activeTexture(TEXTURE2);
+          gl.bindTexture(TEXTURE_2D, m.specMap);
+          gl.uniform1i(gl.getUniformLocation(m.prog, 'specMap'), 2);
+        }
         int aLoc = gl.getAttribLocation(m.prog, 'aPosn');
         gl.enableVertexAttribArray(aLoc);
-        gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 8*4, 0);    // specify vertex
+        gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 11*4, 0);    // specify vertex
         aLoc = gl.getAttribLocation(m.prog, 'aUV');
         gl.enableVertexAttribArray(aLoc);
-        gl.vertexAttribPointer(aLoc, 2, FLOAT, false, 8*4, 3*4);  // specify UV
+        gl.vertexAttribPointer(aLoc, 2, FLOAT, false, 11*4, 3*4);  // specify UV
         aLoc = gl.getAttribLocation(m.prog, 'aNorm');
         gl.enableVertexAttribArray(aLoc);
-        gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 8*4, 5*4);  // specify normal
+        gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 11*4, 5*4);  // specify normal
+        aLoc = gl.getAttribLocation(m.prog, 'aTang');
+        gl.enableVertexAttribArray(aLoc);
+        gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 11*4, 8*4);  // specify tangent
 
         gl.uniformMatrix4fv(gl.getUniformLocation(m.prog, 'uPMatrix'), false, persT.buf());
         gl.uniformMatrix4fv(gl.getUniformLocation(m.prog, 'uMVMatrix'), false, m._workingT.buf());
@@ -368,8 +418,12 @@ class Mesh
   /**
    * compiles and uploads shader program
    */
+  static Map uploadedPrograms = new Map();
   static Program uploadShaderProgram(String vertSrc, String fragSrc)
   {
+    if (uploadedPrograms.containsKey(vertSrc+"\n"+fragSrc))
+      return uploadedPrograms[vertSrc+"\n"+fragSrc];
+
     Shader vertShader = gl.createShader(VERTEX_SHADER);
     gl.shaderSource(vertShader, vertSrc);
     gl.compileShader(vertShader);
@@ -384,7 +438,12 @@ class Mesh
     gl.linkProgram(prog);
 
     Object linkStat = gl.getProgramParameter(prog, LINK_STATUS);
+    print("vertSrc:\n"+vertSrc);
+    print("fragSrc:\n"+fragSrc);
     print("linkStatus=" + linkStat.toString());
+
+    uploadedPrograms[vertSrc+"\n"+fragSrc] = prog;
+    print("#programs = " + uploadedPrograms.length.toString());
 
     return prog;
   }//endfunction
@@ -403,6 +462,116 @@ class Mesh
     viewT = getViewTransform(px,py,pz,tx,ty,tz);
     camT = viewT.inverse();
     return camT.scale(1.0,1.0,1.0); // duplicate and return
+  }//endfunction
+
+  /**
+   * calculate tangents for normal mapping, quite heavy calculation
+   * input: [vx,vy,vz,u,v,nx,ny,nz,...]
+   * output: [vx,vy,vz,u,v,nx,ny,nz,tx,ty,tz,...]
+   */
+  static List<Vector3> TBRV=null;
+  static List<double> calcTangentBasis(List<int> idxs,List<double> vData)
+  {
+    /*
+    let a be vector from p to q
+    let b be vector from p to r
+
+    p(ax,ay) + q(bx,by) s.t    (y axis)
+    p*ay + q*by = 1  ... (1)
+    p*ax + q*bx = 0  ... (2)
+
+    p*ax = -q*bx
+    p = -q*bx/ax   ... (2a)
+    sub in (1)
+
+    -q*ay*bx/ax + q*by = 1
+    q = 1/(by-ay*bx/ax)
+    */
+
+    int i=0;
+    int n=vData.length~/8;
+    Vector3 v = null;
+
+    if (TBRV==null) TBRV=new List<Vector3>();
+    for (i=TBRV.length-1; i>=0; i--)  {v=TBRV[i]; v.x=0.0; v.y=0.0; v.z=0.0;} // reset vector
+    for (i=TBRV.length; i<n; i++) TBRV.add(new Vector3(0.0,0.0,0.0));
+
+    n = idxs.length;
+    for (i=0; i<n;) // for each triangle
+    {
+      int i0 = idxs[i];  i++;  // tri point index 0
+      int i1 = idxs[i];  i++;  // tri point index 1
+      int i2 = idxs[i];  i++;  // tri point index 2
+
+      double pax = vData[i1*8+3] - vData[i0*8+3];
+      double ax = pax;
+      int tmp;
+      do {
+        tmp=i0; i0=i1; i1=i2; i2=tmp;
+        ax = vData[i1*8+3] - vData[i0*8+3];
+      } while (ax*ax>pax*pax);
+      tmp=i2; i2=i1; i1=i0; i0=tmp;
+
+      int p0 = i0*8+3;
+      int p1 = i1*8+3;
+      int p2 = i2*8+3;
+      double tx = vData[p0++];
+      double ty = vData[p0];
+             ax = vData[p1++] - tx; // vector a in uv space
+      double ay = vData[p1] - ty;
+      double bx = vData[p2++] - tx; // vector b in uv space
+      double by = vData[p2] - ty;
+      double q = 1/(by-ay*bx/ax);
+      double p = -q*bx/ax;
+
+      // find tangent vector from p q
+      p0 = i0*8;
+      p1 = i1*8;
+      p2 = i2*8;
+      tx = vData[p0++];
+      ty = vData[p0++];
+      double tz = vData[p0];
+      ax = vData[p1++] - tx;
+      ay = vData[p1++] - ty;
+      double az = vData[p1] - tz;   // vector a in object space
+      p0 = i0*8;
+      bx = vData[p2++] - tx;
+      by = vData[p2++] - ty;
+      double bz = vData[p2] - tz;   // vector b in object space
+
+      tx = p*ax+q*bx;
+      ty = p*ay+q*by;
+      tz = p*az+q*bz;
+      v = TBRV[i0];   v.x+=tx; v.y+=ty; v.z+=tz; v.w++;
+      v = TBRV[i1];   v.x+=tx; v.y+=ty; v.z+=tz; v.w++;
+      v = TBRV[i2];   v.x+=tx; v.y+=ty; v.z+=tz; v.w++;
+    }//endfor
+
+    // ----- get tangent results for each corresponding point
+    List<double> R = new List<double>();
+    n = vData.length~/8;
+    for (i=0; i<n; i++)
+    {
+      v = TBRV[i];
+      int p0 = i*8+5;
+      double ax = vData[p0++];
+      double ay = vData[p0++];
+      double az = vData[p0];
+
+      double tx = v.y*az - v.z*ay; // cross product tangent
+      double ty = v.z*ax - v.x*az;
+      double tz = v.x*ay - v.y*ax;
+      double tl = 1/sqrt(tx*tx+ty*ty+tz*tz);
+      tx*=tl; ty*=tl; tz*=tl;
+
+      p0 = i*8;
+      R.addAll([vData[p0++],vData[p0++],vData[p0++],  // vx,vy,vz
+                vData[p0++],vData[p0++],              // u,v
+                vData[p0++],vData[p0++],vData[p0++],  // nx,ny,nz
+                tx,ty,tz]);               // tx,ty,tz
+    }//endfor
+
+    return R;
   }//endfunction
 
   /**
