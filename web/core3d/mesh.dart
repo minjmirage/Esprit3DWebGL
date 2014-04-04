@@ -11,30 +11,31 @@ import 'dart:math';
  */
 class Mesh
 {
-  List<double> vertData;
-  List<int> idxData;
-  ImageElement diffImg;
-  ImageElement normImg;
-  ImageElement specImg;
-
-  Program prog;           // the render program for this mesh
-  Buffer vertBuffer;      // uploaded vertices data to GPU
-  Buffer idxBuffer;       // uploaded indices data to GPU
-  Texture diffMap;        // diffuse map
-  Texture normMap;        // normals map
-  Texture specMap;        // specular strength map
-  List<Mesh> childMeshes; // list of children
   Matrix4 transform;      // transform for this mesh
-  Matrix4 _workingT;      // used for rendering
   int numTris;            // num of triangles to render
-  int prepOnState=-1;     // current state id shader programs are compiled on
+  List<Mesh> childMeshes; // list of children
 
-  static RenderingContext gl;       //
-  static int stateId=0;             // incremented when user changes render parameters
-  static List<PointLight> lightPts; //
-  static Matrix4 viewT;             // view transform of the whole scene to be rendered
-  static Matrix4 camT;              // camera transform, inverse of viewT
-  static Matrix4 persT;             // perspective transform matrix
+  List<double> _vertData;
+  List<int> _idxData;
+  ImageElement _diffImg;
+  ImageElement _normImg;
+  ImageElement _specImg;
+
+  Program _prog;          // compiled shader program for this mesh
+  Buffer _vertBuffer;     // uploaded vertices data to GPU
+  Buffer _idxBuffer;      // uploaded indices data to GPU
+  Texture _diffMap;       // diffuse map
+  Texture _normMap;       // normals map
+  Texture _specMap;       // specular strength map
+  Matrix4 _workingT;      // used for rendering
+  int _prepOnState=-1;    // current state id shader programs are compiled on
+
+  static RenderingContext _gl;       // reference to the current rendering context
+  static List<PointLight> _lightPts; // global point lights
+  static int _stateId=0;             // incremented when user changes render parameters
+  static Matrix4 _viewT;             // view transform of the whole scene to be rendered
+  static Matrix4 _camT;              // camera transform, inverse of viewT
+  static Matrix4 _persT;             // perspective transform matrix
 
   /**
    * creates new mesh from given geometry data
@@ -42,8 +43,8 @@ class Mesh
   Mesh([List<double> vertexData=null,List<int> indexData=null])
   {
     // ----- set default global states if not initialized
-    if (viewT==null || persT==null) Mesh.setCamera(0.0,0.0,10.0,0.0,0.0,0.0);
-    if (lightPts==null) lightPts = [new PointLight(0.0,0.0,10.0)];
+    if (_viewT==null || _persT==null) Mesh.setCamera(0.0,0.0,10.0,0.0,0.0,0.0);
+    if (_lightPts==null) _lightPts = [new PointLight(0.0,0.0,10.0)];
 
     // ----- set default for this mesh
     transform = new Matrix4();
@@ -57,17 +58,17 @@ class Mesh
    */
   void _prepForRender()
   {
-    if (vertData!=null && idxData!=null) setGeometry(vertData,idxData);
-    if (diffImg!=null) setTexture(diffImg);
-    if (normImg!=null) setNormalMap(normImg);
-    if (specImg!=null) setSpecularMap(specImg);
-    compileShaderCodes();
+    if (_vertData!=null && _idxData!=null) setGeometry(_vertData,_idxData);
+    if (_diffImg!=null) setTexture(_diffImg);
+    if (_normImg!=null) setNormalMap(_normImg);
+    if (_specImg!=null) setSpecularMap(_specImg);
+    _compileShaderCodes();
   }//endfunction
 
   /**
    * compiles the shader program specific to the mesh and upload
    */
-  void compileShaderCodes()
+  void _compileShaderCodes()
   {
     // ----- construct vertex shader source -------------
     String vertSrc = '''
@@ -99,11 +100,11 @@ class Mesh
                     "varying vec2 vUV;\n"+
                     "varying vec3 vNorm;\n"+
                     "varying vec3 vTang;\n"+
-                    "uniform vec3 lPoints["+lightPts.length.toString()+"];\n"+
-                    "uniform vec3 lColors["+lightPts.length.toString()+"];\n";
-    if (diffMap!=null) fragSrc += "uniform sampler2D diffMap;\n";
-    if (normMap!=null) fragSrc += "uniform sampler2D normMap;\n";
-    if (specMap!=null) fragSrc += "uniform sampler2D specMap;\n";
+                    "uniform vec3 lPoints["+_lightPts.length.toString()+"];\n"+
+                    "uniform vec3 lColors["+_lightPts.length.toString()+"];\n";
+    if (_diffMap!=null) fragSrc += "uniform sampler2D diffMap;\n";
+    if (_normMap!=null) fragSrc += "uniform sampler2D normMap;\n";
+    if (_specMap!=null) fragSrc += "uniform sampler2D specMap;\n";
 
     fragSrc+= "void main(void) {\n"+
               "   vec3 norm = normalize(vNorm);\n"+
@@ -111,13 +112,13 @@ class Mesh
               "   vec3 color;\n"+       // working var
               "   vec3 lightDir;\n"+    // working var
               "   float f = 0.0;\n\n";  // working var
-    if (normMap!=null) fragSrc += "   color = 2.0*texture2D(normMap, vUV).xyz - vec3(1.0,1.0,1.0);\n"+
+    if (_normMap!=null) fragSrc +="   color = 2.0*texture2D(normMap, vUV).xyz - vec3(1.0,1.0,1.0);\n"+
                                   "   vec3 tang = normalize(vTang);\n"+
                                   "   vec3 cota = cross(norm,tang);\n"+
                                   "   norm = color.x*tang + color.y*cota + color.z*norm;\n\n";
-    if (diffMap!=null) fragSrc += "   vec4 texColor = texture2D(diffMap, vUV);\n\n";
+    if (_diffMap!=null) fragSrc +="   vec4 texColor = texture2D(diffMap, vUV);\n\n";
     else               fragSrc += "   vec4 texColor = vec4(1.0,1.0,1.0,1.0);\n\n";
-    for (int i=0; i<lightPts.length; i++)
+    for (int i=0; i<_lightPts.length; i++)
     {
       String si = i.toString();
       fragSrc +="   color = lColors["+si+"] * texColor.xyz;\n"+         // color = lightColor*texColor
@@ -128,12 +129,12 @@ class Mesh
       fragSrc +="   f = dot(lightDir,normalize(vPosn-2.0*dot(vPosn,norm)*norm));\n"+ // spec strength
                 "   f = max(0.0,f*6.0-5.0);\n"+                         // spec strength with hardness
                 "   color = f*lColors["+si+"];\n";                      // reflected light intensity
-      if (specMap!=null) fragSrc +="   color = color*texture2D(diffMap, vUV).xyz;\n";
+      if (_specMap!=null) fragSrc +="   color = color*texture2D(diffMap, vUV).xyz;\n";
       fragSrc +="   accu = max(accu,vec4(color, texColor.a));\n";       // specular refl color
     }
     fragSrc += "   gl_FragColor = accu;\n}";
-    prog = uploadShaderProgram(vertSrc,fragSrc);
-    if (prog!=null) prepOnState = stateId;  // specify shader code is built based on this state
+    _prog = _uploadShaderProgram(vertSrc,fragSrc);
+    if (_prog!=null) _prepOnState = _stateId;  // specify shader code is built based on this state
   }//endfunction
 
   /**
@@ -160,69 +161,69 @@ class Mesh
    */
   void setGeometry([List<double> vertexData=null,List<int> indexData=null])
   {
-    vertData = vertexData;
-    idxData = indexData;
+    _vertData = vertexData;
+    _idxData = indexData;
 
     // ----- upload vertex data to buffer
-    if (vertData!=null)
+    if (_vertData!=null)
     {
-      if (idxData==null) 
+      if (_idxData==null)
       {
-        numTris = vertData.length~/24;
-        idxData = new List<int>();
-        for (int i=0; i<numTris*3; i++)  idxData.add(i);
+        numTris = _vertData.length~/24;
+        _idxData = new List<int>();
+        for (int i=0; i<numTris*3; i++)  _idxData.add(i);
       }
       else
-        numTris = idxData.length~/3;
-      
+        numTris = _idxData.length~/3;
+
       // ----- calc default normals to data if normals are 0,0,0 ----
-      for (int i=0; i<numTris; i++) 
+      for (int i=0; i<numTris; i++)
       {
-         int i0=idxData[i*3+0]*8;
-         int i1=idxData[i*3+1]*8;
-         int i2=idxData[i*3+2]*8;
-                
-         if ((vertData[i0+5]==0 && vertData[i0+6]==0 && vertData[i0+7]==0) ||
-             (vertData[i1+5]==0 && vertData[i1+6]==0 && vertData[i1+7]==0) ||
-             (vertData[i2+5]==0 && vertData[i2+6]==0 && vertData[i2+7]==0))
+         int i0=_idxData[i*3+0]*8;
+         int i1=_idxData[i*3+1]*8;
+         int i2=_idxData[i*3+2]*8;
+
+         if ((_vertData[i0+5]==0 && _vertData[i0+6]==0 && _vertData[i0+7]==0) ||
+             (_vertData[i1+5]==0 && _vertData[i1+6]==0 && _vertData[i1+7]==0) ||
+             (_vertData[i2+5]==0 && _vertData[i2+6]==0 && _vertData[i2+7]==0))
          {
            // ----- calculate default normals ------------------------
-           double vax = vertData[i0+0];
-           double vay = vertData[i0+1];
-           double vaz = vertData[i0+2];
-           double px = vertData[i1+0] - vax;
-           double py = vertData[i1+1] - vay;
-           double pz = vertData[i1+2] - vaz;
-           double qx = vertData[i2+0] - vax;
-           double qy = vertData[i2+1] - vay;
-           double qz = vertData[i2+2] - vaz;
+           double vax = _vertData[i0+0];
+           double vay = _vertData[i0+1];
+           double vaz = _vertData[i0+2];
+           double px = _vertData[i1+0] - vax;
+           double py = _vertData[i1+1] - vay;
+           double pz = _vertData[i1+2] - vaz;
+           double qx = _vertData[i2+0] - vax;
+           double qy = _vertData[i2+1] - vay;
+           double qz = _vertData[i2+2] - vaz;
            // normal by determinant
            double nx = py*qz-pz*qy; //  unit normal x for the triangle
            double ny = pz*qx-px*qz; //  unit normal y for the triangle
            double nz = px*qy-py*qx; //  unit normal z for the triangle
            double nl = sqrt(nx*nx+ny*ny+nz*nz);
            nx/=nl; ny/=nl; nz/=nl;
-           vertData[i0+5]=nx; vertData[i0+6]=ny; vertData[i0+7]=nz;
-           vertData[i1+5]=nx; vertData[i1+6]=ny; vertData[i1+7]=nz;
-           vertData[i2+5]=nx; vertData[i2+6]=ny; vertData[i2+7]=nz;
+           _vertData[i0+5]=nx; _vertData[i0+6]=ny; _vertData[i0+7]=nz;
+           _vertData[i1+5]=nx; _vertData[i1+6]=ny; _vertData[i1+7]=nz;
+           _vertData[i2+5]=nx; _vertData[i2+6]=ny; _vertData[i2+7]=nz;
          }
       }
     }//endif
 
-    if (vertData==null || idxData==null || gl==null) 
+    if (_vertData==null || _idxData==null || _gl==null)
     {
       numTris=0;
-      prog=null; 
+      _prog=null;
       return;
     }
 
-    idxBuffer = gl.createBuffer();
-    gl.bindBuffer(ELEMENT_ARRAY_BUFFER, idxBuffer);
-    gl.bufferDataTyped(ELEMENT_ARRAY_BUFFER,new Uint16List.fromList(idxData),STATIC_DRAW);
+    _idxBuffer = _gl.createBuffer();
+    _gl.bindBuffer(ELEMENT_ARRAY_BUFFER, _idxBuffer);
+    _gl.bufferDataTyped(ELEMENT_ARRAY_BUFFER,new Uint16List.fromList(_idxData),STATIC_DRAW);
 
-    vertBuffer = gl.createBuffer();
-    gl.bindBuffer(ARRAY_BUFFER, vertBuffer);
-    gl.bufferDataTyped(ARRAY_BUFFER,new Float32List.fromList(calcTangentBasis(idxData,vertData)),STATIC_DRAW);
+    _vertBuffer = _gl.createBuffer();
+    _gl.bindBuffer(ARRAY_BUFFER, _vertBuffer);
+    _gl.bufferDataTyped(ARRAY_BUFFER,new Float32List.fromList(calcTangentBasis(_idxData,_vertData)),STATIC_DRAW);
   }//endfunction
 
   /**
@@ -230,9 +231,9 @@ class Mesh
    */
   void setTexture(ImageElement img,[bool propagate=false])
   {
-    diffImg = img;
-    diffMap = createMipMapTexture(img);
-    compileShaderCodes();
+    _diffImg = img;
+    _diffMap = createMipMapTexture(img);
+    _compileShaderCodes();
     if (propagate)
       for (int i=childMeshes.length-1; i>-1; i--)
         childMeshes[i].setTexture(img,propagate);
@@ -243,9 +244,9 @@ class Mesh
    */
   void setNormalMap(ImageElement img,[bool propagate=false])
   {
-    normImg = img;
-    normMap = createMipMapTexture(img);
-    compileShaderCodes();
+    _normImg = img;
+    _normMap = createMipMapTexture(img);
+    _compileShaderCodes();
     if (propagate)
       for (int i=childMeshes.length-1; i>-1; i--)
         childMeshes[i].setNormalMap(img,propagate);
@@ -256,21 +257,21 @@ class Mesh
    */
   void setSpecularMap(ImageElement img,[bool propagate=false])
   {
-    specImg = img;
-    specMap = createMipMapTexture(img);
-    compileShaderCodes();
+    _specImg = img;
+    _specMap = createMipMapTexture(img);
+    _compileShaderCodes();
     if (propagate)
       for (int i=childMeshes.length-1; i>-1; i--)
         childMeshes[i].setSpecularMap(img,propagate);
   }//endfunction
 
   /**
-  * brute force check to reduce the number of vertices uploaded by reusing identical vertices
-  */
+   * brute force check to reduce the number of vertices uploaded by reusing identical vertices
+   */
   void compressGeometry([bool propagate=false])
   {
-    List<double> oV = vertData;
-    List<int> oI = idxData;
+    List<double> oV = _vertData;
+    List<int> oI = _idxData;
 
     if (oV!=null && oI!=null)
     {
@@ -331,21 +332,21 @@ class Mesh
   /**
    * creates a texture out of given imageElement
    */
-  static Map uploadedTextures = new Map();
+  static Map _uploadedTextures = new Map();
   static Texture createMipMapTexture(ImageElement image,[Texture texture=null])
   {
-    if (uploadedTextures.containsKey(image))
-      return uploadedTextures[image];
-    if (gl==null) return null;
-    if (texture==null) texture = gl.createTexture();
-    gl.pixelStorei(UNPACK_FLIP_Y_WEBGL, 1);
-    gl.bindTexture(TEXTURE_2D, texture);
-    gl.texImage2DImage(TEXTURE_2D, 0, RGBA, RGBA, UNSIGNED_BYTE, image);
-    gl.texParameteri(TEXTURE_2D, TEXTURE_MAG_FILTER, LINEAR);
-    gl.texParameteri(TEXTURE_2D, TEXTURE_MIN_FILTER, LINEAR_MIPMAP_NEAREST);
-    gl.generateMipmap(TEXTURE_2D);
-    uploadedTextures[image] = texture;
-    print("#textures = "+uploadedTextures.length.toString());
+    if (_uploadedTextures.containsKey(image))
+      return _uploadedTextures[image];
+    if (_gl==null) return null;
+    if (texture==null) texture = _gl.createTexture();
+    _gl.pixelStorei(UNPACK_FLIP_Y_WEBGL, 1);
+    _gl.bindTexture(TEXTURE_2D, texture);
+    _gl.texImage2DImage(TEXTURE_2D, 0, RGBA, RGBA, UNSIGNED_BYTE, image);
+    _gl.texParameteri(TEXTURE_2D, TEXTURE_MAG_FILTER, LINEAR);
+    _gl.texParameteri(TEXTURE_2D, TEXTURE_MIN_FILTER, LINEAR_MIPMAP_NEAREST);
+    _gl.generateMipmap(TEXTURE_2D);
+    _uploadedTextures[image] = texture;
+    print("#textures = "+_uploadedTextures.length.toString());
     return texture;
   }//endfunction
 
@@ -355,85 +356,85 @@ class Mesh
   static void render(RenderingContext context,Mesh tree,int viewWidth, int viewHeight, double aspect)
   {
     if (context==null) return;
-    gl = context;
-    gl.clearColor(0.0, 0.0, 0.0, 1.0);  // clear color and alpha
+    _gl = context;
+    _gl.clearColor(0.0, 0.0, 0.0, 1.0);  // clear color and alpha
 
     // Basic viewport setup and clearing of the screen
-    gl.viewport(0, 0, viewWidth, viewHeight);
-    gl.clear(COLOR_BUFFER_BIT | DEPTH_BUFFER_BIT);
-    gl.enable(DEPTH_TEST);
-    gl.enable(BLEND);
+    _gl.viewport(0, 0, viewWidth, viewHeight);
+    _gl.clear(COLOR_BUFFER_BIT | DEPTH_BUFFER_BIT);
+    _gl.enable(DEPTH_TEST);
+    _gl.enable(BLEND);
 
     // ----- calculate lighting info
-    Float32List lPs = new Float32List(lightPts.length*3);     // light positions
-    Float32List lCs = new Float32List(lightPts.length*3);     // light colors
-    for (int i=lightPts.length-1; i>-1; i--)
+    Float32List lPs = new Float32List(_lightPts.length*3);     // light positions
+    Float32List lCs = new Float32List(_lightPts.length*3);     // light colors
+    for (int i=_lightPts.length-1; i>-1; i--)
     {
-      PointLight lpt = lightPts[i];
-      lPs[i*3+0] = lpt.px*viewT.aa+lpt.py*viewT.ab+lpt.pz*viewT.ac+viewT.ad;  // transformed lightPt x
-      lPs[i*3+1] = lpt.px*viewT.ba+lpt.py*viewT.bb+lpt.pz*viewT.bc+viewT.bd;  // transformed lightPt y
-      lPs[i*3+2] = lpt.px*viewT.ca+lpt.py*viewT.cb+lpt.pz*viewT.cc+viewT.cd;  // transformed lightPt z
+      PointLight lpt = _lightPts[i];
+      lPs[i*3+0] = lpt.px*_viewT.aa+lpt.py*_viewT.ab+lpt.pz*_viewT.ac+_viewT.ad;  // transformed lightPt x
+      lPs[i*3+1] = lpt.px*_viewT.ba+lpt.py*_viewT.bb+lpt.pz*_viewT.bc+_viewT.bd;  // transformed lightPt y
+      lPs[i*3+2] = lpt.px*_viewT.ca+lpt.py*_viewT.cb+lpt.pz*_viewT.cc+_viewT.cd;  // transformed lightPt z
       lCs[i*3+0] = lpt.r;
       lCs[i*3+1] = lpt.g;
       lCs[i*3+2] = lpt.b;
     }//endfor
 
     List<Mesh> Mshs = new List<Mesh>();
-    tree._flattenTree(viewT,Mshs);
+    tree._flattenTree(_viewT,Mshs);
 
     for (int i=Mshs.length-1; i>-1; i--)
     {
       Mesh m=Mshs[i];   // current mesh to render
 
-      if (m.prog==null && m.vertData!=null && m.idxData!=null)
+      if (m._prog==null && m._vertData!=null && m._idxData!=null)
         m._prepForRender();
 
-      if (m.prog!=null)
+      if (m._prog!=null)
       {
-        if (m.prepOnState!=stateId) m.compileShaderCodes();       // recompile shader code if global state changed
+        if (m._prepOnState!=_stateId) m._compileShaderCodes();     // recompile shader code if global state changed
 
-        gl.useProgram(m.prog);                                    // set shader program
-        gl.bindBuffer(ELEMENT_ARRAY_BUFFER, m.idxBuffer);         // bind index buffer
-        gl.bindBuffer(ARRAY_BUFFER, m.vertBuffer);                // bind vertex buffer
-        if (m.diffMap!=null)
+        _gl.useProgram(m._prog);                                   // set shader program
+        _gl.bindBuffer(ELEMENT_ARRAY_BUFFER, m._idxBuffer);        // bind index buffer
+        _gl.bindBuffer(ARRAY_BUFFER, m._vertBuffer);               // bind vertex buffer
+        if (m._diffMap!=null)
         {
-          gl.activeTexture(TEXTURE0);
-          gl.bindTexture(TEXTURE_2D, m.diffMap);
-          gl.uniform1i(gl.getUniformLocation(m.prog, 'diffMap'), 0);
+          _gl.activeTexture(TEXTURE0);
+          _gl.bindTexture(TEXTURE_2D, m._diffMap);
+          _gl.uniform1i(_gl.getUniformLocation(m._prog, 'diffMap'), 0);
         }
-        if (m.normMap!=null)
+        if (m._normMap!=null)
         {
-          gl.activeTexture(TEXTURE1);
-          gl.bindTexture(TEXTURE_2D, m.normMap);
-          gl.uniform1i(gl.getUniformLocation(m.prog, 'normMap'), 1);
+          _gl.activeTexture(TEXTURE1);
+          _gl.bindTexture(TEXTURE_2D, m._normMap);
+          _gl.uniform1i(_gl.getUniformLocation(m._prog, 'normMap'), 1);
         }
-        if (m.specMap!=null)
+        if (m._specMap!=null)
         {
-          gl.activeTexture(TEXTURE2);
-          gl.bindTexture(TEXTURE_2D, m.specMap);
-          gl.uniform1i(gl.getUniformLocation(m.prog, 'specMap'), 2);
+          _gl.activeTexture(TEXTURE2);
+          _gl.bindTexture(TEXTURE_2D, m._specMap);
+          _gl.uniform1i(_gl.getUniformLocation(m._prog, 'specMap'), 2);
         }
-        int aLoc = gl.getAttribLocation(m.prog, 'aPosn');
-        gl.enableVertexAttribArray(aLoc);
-        gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 11*4, 0);    // specify vertex
-        aLoc = gl.getAttribLocation(m.prog, 'aUV');
-        gl.enableVertexAttribArray(aLoc);
-        gl.vertexAttribPointer(aLoc, 2, FLOAT, false, 11*4, 3*4);  // specify UV
-        aLoc = gl.getAttribLocation(m.prog, 'aNorm');
-        gl.enableVertexAttribArray(aLoc);
-        gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 11*4, 5*4);  // specify normal
-        aLoc = gl.getAttribLocation(m.prog, 'aTang');
-        gl.enableVertexAttribArray(aLoc);
-        gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 11*4, 8*4);  // specify tangent
+        int aLoc = _gl.getAttribLocation(m._prog, 'aPosn');
+        _gl.enableVertexAttribArray(aLoc);
+        _gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 11*4, 0);    // specify vertex
+        aLoc = _gl.getAttribLocation(m._prog, 'aUV');
+        _gl.enableVertexAttribArray(aLoc);
+        _gl.vertexAttribPointer(aLoc, 2, FLOAT, false, 11*4, 3*4);  // specify UV
+        aLoc = _gl.getAttribLocation(m._prog, 'aNorm');
+        _gl.enableVertexAttribArray(aLoc);
+        _gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 11*4, 5*4);  // specify normal
+        aLoc = _gl.getAttribLocation(m._prog, 'aTang');
+        _gl.enableVertexAttribArray(aLoc);
+        _gl.vertexAttribPointer(aLoc, 3, FLOAT, false, 11*4, 8*4);  // specify tangent
 
-        gl.uniformMatrix4fv(gl.getUniformLocation(m.prog, 'uPMatrix'), false, persT.buf());
-        gl.uniformMatrix4fv(gl.getUniformLocation(m.prog, 'uMVMatrix'), false, m._workingT.buf());
+        _gl.uniformMatrix4fv(_gl.getUniformLocation(m._prog, 'uPMatrix'), false, _persT.buf());
+        _gl.uniformMatrix4fv(_gl.getUniformLocation(m._prog, 'uMVMatrix'), false, m._workingT.buf());
 
-        gl.uniform3fv(gl.getUniformLocation(m.prog, 'lPoints'),lPs);  // upload light posns
-        gl.uniform3fv(gl.getUniformLocation(m.prog, 'lColors'),lCs);  // upload light colors
+        _gl.uniform3fv(_gl.getUniformLocation(m._prog, 'lPoints'),lPs);  // upload light posns
+        _gl.uniform3fv(_gl.getUniformLocation(m._prog, 'lColors'),lCs);  // upload light colors
 
-        //gl.drawArrays(TRIANGLES, 0, m.numTris*3);
-        gl.drawElements(TRIANGLES, m.numTris*3, UNSIGNED_SHORT, 0);
+        //_gl.drawArrays(TRIANGLES, 0, m.numTris*3);
+        _gl.drawElements(TRIANGLES, m.numTris*3, UNSIGNED_SHORT, 0);
       }//endif
     }//endfor
 
@@ -442,33 +443,33 @@ class Mesh
   /**
    * compiles and uploads shader program
    */
-  static Map uploadedPrograms = new Map();
-  static Program uploadShaderProgram(String vertSrc, String fragSrc)
+  static Map _uploadedPrograms = new Map();
+  static Program _uploadShaderProgram(String vertSrc, String fragSrc)
   {
-    if (uploadedPrograms.containsKey(vertSrc+"\n"+fragSrc))
-      return uploadedPrograms[vertSrc+"\n"+fragSrc];
+    if (_uploadedPrograms.containsKey(vertSrc+"\n"+fragSrc))
+      return _uploadedPrograms[vertSrc+"\n"+fragSrc];
 
-    if (gl==null) return null;
+    if (_gl==null) return null;
 
-    Shader vertShader = gl.createShader(VERTEX_SHADER);
-    gl.shaderSource(vertShader, vertSrc);
-    gl.compileShader(vertShader);
+    Shader vertShader = _gl.createShader(VERTEX_SHADER);
+    _gl.shaderSource(vertShader, vertSrc);
+    _gl.compileShader(vertShader);
 
-    Shader fragShader = gl.createShader(FRAGMENT_SHADER);
-    gl.shaderSource(fragShader, fragSrc);
-    gl.compileShader(fragShader);
+    Shader fragShader = _gl.createShader(FRAGMENT_SHADER);
+    _gl.shaderSource(fragShader, fragSrc);
+    _gl.compileShader(fragShader);
 
-    Program prog = gl.createProgram();
-    gl.attachShader(prog, vertShader);
-    gl.attachShader(prog, fragShader);
-    gl.linkProgram(prog);
+    Program prog = _gl.createProgram();
+    _gl.attachShader(prog, vertShader);
+    _gl.attachShader(prog, fragShader);
+    _gl.linkProgram(prog);
 
-    Object linkStat = gl.getProgramParameter(prog, LINK_STATUS);
+    Object linkStat = _gl.getProgramParameter(prog, LINK_STATUS);
     print("linkStatus=" + linkStat.toString());
     if (linkStat.toString()!='true') print("vertSrc:\n"+vertSrc+"\nfragSrc:\n"+fragSrc);
 
-    uploadedPrograms[vertSrc+"\n"+fragSrc] = prog;
-    print("#programs = " + uploadedPrograms.length.toString());
+    _uploadedPrograms[vertSrc+"\n"+fragSrc] = prog;
+    print("#programs = " + _uploadedPrograms.length.toString());
 
     return prog;
   }//endfunction
@@ -483,10 +484,10 @@ class Mesh
     nearClip = min(near,far);
     farClip = max(near,far);
     double aspectRatio = 1.0;
-    persT = Matrix4.perspective(fov, aspectRatio, nearClip, farClip);
-    viewT = getViewTransform(px,py,pz,tx,ty,tz);
-    camT = viewT.inverse();
-    return camT.scale(1.0,1.0,1.0); // duplicate and return
+    _persT = Matrix4.perspective(fov, aspectRatio, nearClip, farClip);
+    _viewT = getViewTransform(px,py,pz,tx,ty,tz);
+    _camT = _viewT.inverse();
+    return _camT.scale(1.0,1.0,1.0); // duplicate and return
   }//endfunction
 
   /**
@@ -494,7 +495,7 @@ class Mesh
    * input: [vx,vy,vz,u,v,nx,ny,nz,...]
    * output: [vx,vy,vz,u,v,nx,ny,nz,tx,ty,tz,...]
    */
-  static List<Vector3> TBRV=null;
+  static List<Vector3> _TBRV=null;
   static List<double> calcTangentBasis(List<int> idxs,List<double> vData)
   {
     /*
@@ -517,9 +518,9 @@ class Mesh
     int n=vData.length~/8;
     Vector3 v = null;
 
-    if (TBRV==null) TBRV=new List<Vector3>();
-    for (i=TBRV.length-1; i>=0; i--)  {v=TBRV[i]; v.x=0.0; v.y=0.0; v.z=0.0;} // reset vector
-    for (i=TBRV.length; i<n; i++) TBRV.add(new Vector3(0.0,0.0,0.0));
+    if (_TBRV==null) _TBRV=new List<Vector3>();
+    for (i=_TBRV.length-1; i>=0; i--)  {v=_TBRV[i]; v.x=0.0; v.y=0.0; v.z=0.0;} // reset vector
+    for (i=_TBRV.length; i<n; i++) _TBRV.add(new Vector3(0.0,0.0,0.0));
 
     n = idxs.length;
     for (i=0; i<n;) // for each triangle
@@ -567,9 +568,9 @@ class Mesh
       tx = p*ax+q*bx;
       ty = p*ay+q*by;
       tz = p*az+q*bz;
-      v = TBRV[i0];   v.x+=tx; v.y+=ty; v.z+=tz; v.w++;
-      v = TBRV[i1];   v.x+=tx; v.y+=ty; v.z+=tz; v.w++;
-      v = TBRV[i2];   v.x+=tx; v.y+=ty; v.z+=tz; v.w++;
+      v = _TBRV[i0];   v.x+=tx; v.y+=ty; v.z+=tz; v.w++;
+      v = _TBRV[i1];   v.x+=tx; v.y+=ty; v.z+=tz; v.w++;
+      v = _TBRV[i2];   v.x+=tx; v.y+=ty; v.z+=tz; v.w++;
     }//endfor
 
     // ----- get tangent results for each corresponding point
@@ -577,7 +578,7 @@ class Mesh
     n = vData.length~/8;
     for (i=0; i<n; i++)
     {
-      v = TBRV[i];
+      v = _TBRV[i];
       int p0 = i*8+5;
       double ax = vData[p0++];
       double ay = vData[p0++];
@@ -604,8 +605,8 @@ class Mesh
    */
   static void setLights(List<PointLight> lights)
   {
-    if (lightPts.length!=lights.length) stateId++; // to trigger recompile of shader codes
-    lightPts=lights;
+    if (_lightPts.length!=lights.length) _stateId++; // to trigger recompile of shader codes
+    _lightPts=lights;
   }//endfunction
 
   /**
@@ -780,8 +781,8 @@ class Mesh
   }//endfunction
 
   /**
-  * create a doughnut shape with band radius r1, thickness r2, of m segments and made of n cylinders
-  */
+   * create a doughnut shape with band radius r1, thickness r2, of m segments and made of n cylinders
+   */
   static Mesh createTorus(double r1,double r2,[int m=32,int n=8,bool soft=true])
   {
     List<double> T = new List<double>();
@@ -826,8 +827,8 @@ class Mesh
   }//endfunction
 
   /**
-  * creates a circular band of triangles of specified r1,r2 z1,z2
-  */
+   * creates a circular band of triangles of specified r1,r2 z1,z2
+   */
   static List<double> createTrianglesBand(double r1,double r2,double z1,double z2,int n,[bool soft=true])
   {
     List<double> A = new List<double>();
