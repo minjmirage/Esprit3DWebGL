@@ -88,7 +88,7 @@ class Mesh
      void main(void) {
          vPosn = (uMVMatrix * vec4(aPosn, 1.0)).xyz;
          gl_Position = uPMatrix * vec4(vPosn, 1.0);
-         vUV = aUV;
+         vUV = vec2(aUV.x,-aUV.y);
          vNorm = (uMVMatrix * vec4(aNorm, 0.0)).xyz;
          vTang = (uMVMatrix * vec4(aTang, 0.0)).xyz;
      }
@@ -282,24 +282,24 @@ class Mesh
       int l = oI.length;
       for (int i=0; i<l; i++)
       {
-        int oidx = oI[i];    // old index
-        double vx = oV[oidx*8+0];
-        double vy = oV[oidx*8+1];
-        double vz = oV[oidx*8+2];
-        double nx = oV[oidx*8+5];
-        double ny = oV[oidx*8+6];
-        double nz = oV[oidx*8+7];
-        double u = oV[oidx*8+3];
-        double v = oV[oidx*8+4];
+        int oidx = oI[i]*8;    // old index
+        double vx = oV[oidx+0];
+        double vy = oV[oidx+1];
+        double vz = oV[oidx+2];
+        double nx = oV[oidx+5];
+        double ny = oV[oidx+6];
+        double nz = oV[oidx+7];
+        double u = oV[oidx+3];
+        double v = oV[oidx+4];
 
         int nidx = -1;      // new index
         n = tV.length;
-        for (int j=0; j<n && nidx==-1; j++)
+        for (int j=n-1; j>-1 && nidx==-1; j--)
         {
           VertexData vd = tV[j];
           if (vd.vx==vx && vd.vy==vy && vd.vz==vz &&
-            vd.nx==nx && vd.ny==ny && vd.nz==nz &&
-            vd.u==u && vd.v==v)
+              vd.nx==nx && vd.ny==ny && vd.nz==nz &&
+              vd.u==u && vd.v==v)
             nidx = j;
         }
 
@@ -320,7 +320,8 @@ class Mesh
       }
 
       setGeometry(nV,nI);
-      print("compressed from "+(oV.length~/8).toString()+" to "+(nV.length~/8).toString()+" vertices");
+      print("compressed from "+(oV.length~/8).toString()+" to "+(nV.length~/8).toString()+" vertices "+
+            (nV.length/oV.length*100).toStringAsFixed(2)+"% of original");
     }
 
     // ----- do for submeshes too if required
@@ -897,14 +898,27 @@ class Mesh
    */
   static void loadObj(String url,handle(Mesh m))
   {
-    HttpRequest.getString(url).then((String s) {handle(Mesh.parseObj(s));});
+    List<String> A = url.split(".");
+    A.removeLast();
+    String mtlUrl = A.join(".")+".mtl";
+    A = url.split("/");
+    A.removeLast();
+    String urlPath = A.join("/")+"/";
+
+    HttpRequest.getString(mtlUrl).then((String mtlData) {
+      parseMtlToList(mtlData,urlPath,(List Mtls) {
+        HttpRequest.getString(url).then((String objData) {
+          handle(Mesh.parseObj(objData,Mtls));
+        });
+      });
+    });
   }//endfunction
 
   /**
    * parses a given obj format string data s to mesh with null texture
    * Mtls: [id1,bmd1,id2,bmd2,...]
    */
-  static Mesh parseObj(String s)
+  static Mesh parseObj(String s,[List Mtls=null])
   {
     int i = 0;
     int j = 0;
@@ -984,6 +998,9 @@ class Mesh
 
     Mesh mmesh = new Mesh();              // main mesh to add all submeshes into
 
+    ImageElement mtl = null;            //
+    if (Mtls!=null && Mtls.length>=2) mtl=Mtls[1];  // default material to use to first material
+
     double onNumParseError(String s) {return 1.0;};
 
     for (int g=0; g<G.length; g++)
@@ -996,7 +1013,7 @@ class Mesh
       {
         if (F[i] is String) // switch to another material
         {
-
+          if (Mtls!=null) mtl = Mtls[Mtls.indexOf(F[i])+1];
         }
         else
         {
@@ -1092,11 +1109,54 @@ class Mesh
       if (verticesData.length>0)
       {
         Mesh cm = new Mesh(verticesData); //
+        cm.compressGeometry(false);
+        if (mtl!=null) cm.setTexture(mtl);
         mmesh.addChild(cm);
       }
     }//endfor g
 
     return mmesh; // returns mesh with submeshes in it
+  }//endfunction
+
+  /**
+   * returns a list of loaded ImageElements
+   */
+  static void parseMtlToList(String s,String folder,callBack(List l))
+  {
+    // ----- create an array of [id1,url1,id2,url2,...] ----------------
+    List L = [];
+    List<String> D = s.split("\n");
+    for (int i=0; i<D.length; i++)
+    {
+      if (D[i].startsWith("newmtl "))
+      {
+        if (L.length%2==1) L.add(null);   // if prev id does not have mtl
+        L.add(D[i].split(" ").last);      // mtl id
+      }
+      else if (D[i].startsWith("map_Kd "))
+      {
+        if (L.length%2==1) L.add(D[i].split(" ").last); // tex url, ensure only one id to one mtl
+      }
+    }//endfor
+    print("parseMtlToList L="+L.toString());
+
+    int idx=0;
+    void loadNextImg()
+    {
+      if (idx>=L.length)
+        callBack(L);
+      else
+      {
+        print("parseMtlToList loading "+folder+L[idx+1]);
+        ImageElement img = new ImageElement(src:folder+L[idx+1]);
+        img.onLoad.listen((dat) {
+          L[idx+1]=img;
+          idx+=2;
+          loadNextImg();
+        });
+      }
+    }//endfunction
+    loadNextImg();
   }//endfunction
 }//endclass
 

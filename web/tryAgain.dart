@@ -17,17 +17,16 @@ void main()
 
   scene = new Mesh();
 
-  Mesh itm = Mesh.createTetra(1.0,false);
-  scene.addChild(itm);
-  itm = Mesh.createTorus(0.5,0.2);
-  itm.transform = itm.transform.translate(sin(0), 0.0, cos(0));
-  scene.addChild(itm);
-  itm = Mesh.createSphere(0.5);
-  itm.transform = itm.transform.translate(sin(PI*2/3), 0.0, cos(PI*2/3));
-  scene.addChild(itm);
-  itm = Mesh.createCube(1.0,1.0,1.0,false);
-  itm.transform = itm.transform.translate(sin(PI*4/3), 0.0, cos(PI*4/3));
-  scene.addChild(itm);
+  List<Mesh> Prim = [Mesh.createTetra(1.5,false),
+                     Mesh.createCube(1.0,1.0,1.0,false),
+                     Mesh.createSphere(0.5),
+                     Mesh.createTorus(0.35,0.18)];
+  for (int i=0; i<Prim.length; i++)
+  {
+    Mesh itm = Prim[i];
+    itm.transform = itm.transform.translate(2*sin(i/Prim.length*PI*2), 0.0, 2*cos(i/Prim.length*PI*2));
+    scene.addChild(itm);
+  }
 
   loadImgs(["weaveDiff.jpg","weaveNorm.jpg","weaveSpec.jpg","hexDiff.jpg","hexNorm.jpg","hexSpec.jpg"],(List<ImageElement> Texs)
       {
@@ -40,6 +39,8 @@ void main()
         cube.setSpecularMap(Texs[5]);
         scene.addChild(cube);
         tick(0.0);  // start main loop!
+
+        Mesh.loadObj("maid/maid.obj", (Mesh m) {m.transform = m.transform.translate(0.0,-1.0,0.0); scene.addChild(m);});
       });
 }//endmain
 
@@ -65,7 +66,7 @@ tick(double time)
 {
   window.animationFrame.then(tick);
   print("time:"+time.toString());
-  double r = 5+sin(time/500);
+  double r = 5+sin(time/2500);
   double sinT = sin(sin(time/1000));
 
   Mesh.setLights([new PointLight(10.0*sin(time/500),0.0,10.0*cos(time/500),1.0,1.0,1.0)]);
