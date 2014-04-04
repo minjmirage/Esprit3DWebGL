@@ -15,11 +15,12 @@ class Mesh
   int numTris;            // num of triangles to render
   List<Mesh> childMeshes; // list of children
 
-  List<double> _vertData;
-  List<int> _idxData;
-  ImageElement _diffImg;
-  ImageElement _normImg;
-  ImageElement _specImg;
+  Material _illum;        // illumination parameters for this mesh
+  List<double> _vertData; // 
+  List<int> _idxData;     // 
+  ImageElement _diffImg;  // 
+  ImageElement _normImg;  // 
+  ImageElement _specImg;  // 
 
   Program _prog;          // compiled shader program for this mesh
   Buffer _vertBuffer;     // uploaded vertices data to GPU
@@ -49,7 +50,8 @@ class Mesh
     // ----- set default for this mesh
     transform = new Matrix4();
     childMeshes = new List<Mesh>();
-
+    _illum = new Material();
+    
     setGeometry(vertexData,indexData);
   }//endconstr
 
@@ -88,7 +90,7 @@ class Mesh
      void main(void) {
          vPosn = (uMVMatrix * vec4(aPosn, 1.0)).xyz;
          gl_Position = uPMatrix * vec4(vPosn, 1.0);
-         vUV = vec2(aUV.x,-aUV.y);
+         vUV = vec2(aUV.x,aUV.y);
          vNorm = (uMVMatrix * vec4(aNorm, 0.0)).xyz;
          vTang = (uMVMatrix * vec4(aTang, 0.0)).xyz;
      }
@@ -100,24 +102,27 @@ class Mesh
                     "varying vec2 vUV;\n"+
                     "varying vec3 vNorm;\n"+
                     "varying vec3 vTang;\n"+
+                    "uniform vec3 ambient;\n"+
+                    "uniform vec2 specular;\n"+
                     "uniform vec3 lPoints["+_lightPts.length.toString()+"];\n"+
                     "uniform vec3 lColors["+_lightPts.length.toString()+"];\n";
     if (_diffMap!=null) fragSrc += "uniform sampler2D diffMap;\n";
     if (_normMap!=null) fragSrc += "uniform sampler2D normMap;\n";
     if (_specMap!=null) fragSrc += "uniform sampler2D specMap;\n";
 
-    fragSrc+= "void main(void) {\n"+
-              "   vec3 norm = normalize(vNorm);\n"+
-              "   vec4 accu = vec4(0.0,0.0,0.0,0.0);\n"+
+    fragSrc+= "\nvoid main(void) {\n"+
               "   vec3 color;\n"+       // working var
               "   vec3 lightDir;\n"+    // working var
-              "   float f = 0.0;\n\n";  // working var
+              "   float f = 0.0;\n"+    // working var
+              "   vec3 norm = normalize(vNorm);\n";
     if (_normMap!=null) fragSrc +="   color = 2.0*texture2D(normMap, vUV).xyz - vec3(1.0,1.0,1.0);\n"+
                                   "   vec3 tang = normalize(vTang);\n"+
                                   "   vec3 cota = cross(norm,tang);\n"+
-                                  "   norm = color.x*tang + color.y*cota + color.z*norm;\n\n";
-    if (_diffMap!=null) fragSrc +="   vec4 texColor = texture2D(diffMap, vUV);\n\n";
-    else               fragSrc += "   vec4 texColor = vec4(1.0,1.0,1.0,1.0);\n\n";
+                                  "   norm = color.x*tang + color.y*cota + color.z*norm;\n";
+    if (_diffMap!=null) fragSrc +="   vec4 texColor = texture2D(diffMap, vUV);\n";
+    else                fragSrc +="   vec4 texColor = vec4(1.0,1.0,1.0,1.0);\n";
+    
+    fragSrc+= "   vec4 accu = texColor*vec4(ambient,0.0);\n\n";
     for (int i=0; i<_lightPts.length; i++)
     {
       String si = i.toString();
@@ -127,7 +132,7 @@ class Mesh
                 "   accu = max(accu,vec4(color*f, texColor.a));\n";     // diffuse shaded color
 
       fragSrc +="   f = dot(lightDir,normalize(vPosn-2.0*dot(vPosn,norm)*norm));\n"+ // spec strength
-                "   f = max(0.0,f*6.0-5.0);\n"+                         // spec strength with hardness
+                "   f = specular.x*max(0.0,f*(specular.y+1.0)-specular.y);\n"+    // spec strength with hardness
                 "   color = f*lColors["+si+"];\n";                      // reflected light intensity
       if (_specMap!=null) fragSrc +="   color = color*texture2D(diffMap, vUV).xyz;\n";
       fragSrc +="   accu = max(accu,vec4(color, texColor.a));\n";       // specular refl color
@@ -156,6 +161,31 @@ class Mesh
       childMeshes[i]._flattenTree(_workingT,L);
   }//endfunction
 
+  /**
+   * sets ambient illumination
+   */
+  void setAmbient(double r,double g,double b,[bool propagate=false])
+  {
+    _illum.ambR = r;
+    _illum.ambG = g;
+    _illum.ambB = b;
+    if (propagate)
+      for (int i=childMeshes.length-1; i>-1; i--)
+        childMeshes[i].setAmbient(r, g, b, propagate);
+  }//endfunction
+  
+  /**
+   * set the glossiness strength and size of spot reflections
+   */
+  void setSpecular(double str,double hardness,[bool propagate=false])
+  {
+    _illum.specStr = str;
+    _illum.specHard = max(0.0,hardness);
+    if (propagate)
+      for (int i=childMeshes.length-1; i>-1; i--)
+        childMeshes[i].setSpecular(str, hardness, propagate);
+  }//endfunction
+  
   /**
    * set vertices and indices of mesh and upload to buffer if context is available
    */
@@ -354,7 +384,7 @@ class Mesh
   /**
    * renders the given mesh tree
    */
-  static void render(RenderingContext context,Mesh tree,int viewWidth, int viewHeight, double aspect)
+  static void render(RenderingContext context,Mesh tree,int viewWidth, int viewHeight)
   {
     if (context==null) return;
     _gl = context;
@@ -365,6 +395,8 @@ class Mesh
     _gl.clear(COLOR_BUFFER_BIT | DEPTH_BUFFER_BIT);
     _gl.enable(DEPTH_TEST);
     _gl.enable(BLEND);
+    _gl.enable(CULL_FACE);
+    _gl.cullFace(BACK);
 
     // ----- calculate lighting info
     Float32List lPs = new Float32List(_lightPts.length*3);     // light positions
@@ -431,6 +463,10 @@ class Mesh
         _gl.uniformMatrix4fv(_gl.getUniformLocation(m._prog, 'uPMatrix'), false, _persT.buf());
         _gl.uniformMatrix4fv(_gl.getUniformLocation(m._prog, 'uMVMatrix'), false, m._workingT.buf());
 
+        _gl.uniform3fv(_gl.getUniformLocation(m._prog, 'ambient'),      // set ambient illum
+                       new Float32List.fromList([m._illum.ambR,m._illum.ambG,m._illum.ambB]));
+        _gl.uniform2fv(_gl.getUniformLocation(m._prog, 'specular'),      // set ambient illum
+                       new Float32List.fromList([m._illum.specStr,m._illum.specHard]));
         _gl.uniform3fv(_gl.getUniformLocation(m._prog, 'lPoints'),lPs);  // upload light posns
         _gl.uniform3fv(_gl.getUniformLocation(m._prog, 'lColors'),lCs);  // upload light colors
 
@@ -956,11 +992,7 @@ class Mesh
       {
         A = (D[i].substring(2)).split(" ");
         for (j=A.length-1; j>=0; j--)
-        {
-          //if (A[j].indexOf("e-")!=-1)
-            //A[j]=A[j].split("e-")[0];
           if (A[j]=="") A.removeAt(j);
-        }
         for (j=0; j<A.length && j<3; j++)
           N.add(double.parse(A[j]));
       }
@@ -1035,49 +1067,48 @@ class Mesh
             // A: [v,uv,n,v,uv,n,v,uv,n]
 
             // ----- get vertices --------------------------------
-            double vax = V[A[0]*3+0];
-            double vay = V[A[0]*3+1];
-            double vaz = V[A[0]*3+2];
-            double vbx = V[A[3]*3+0];
-            double vby = V[A[3]*3+1];
-            double vbz = V[A[3]*3+2];
-            double vcx = V[A[6]*3+0];
-            double vcy = V[A[6]*3+1];
-            double vcz = V[A[6]*3+2];
+            int idx = A[0]*3;
+            double vax = V[idx++];
+            double vay = V[idx++];
+            double vaz = V[idx];
+            idx = A[3]*3;
+            double vbx = V[idx++];
+            double vby = V[idx++];
+            double vbz = V[idx];
+            idx = A[6]*3;
+            double vcx = V[idx++];
+            double vcy = V[idx++];
+            double vcz = V[idx];
 
             // ----- get normals ---------------------------------
-            double px = vbx - vax;
-            double py = vby - vay;
-            double pz = vbz - vaz;
-
-            double qx = vcx - vax;
-            double qy = vcy - vay;
-            double qz = vcz - vaz;
-            // normal by determinant
-            double nx = py*qz-pz*qy;  //  unit normal x for the triangle
-            double ny = pz*qx-px*qz;  //  unit normal y for the triangle
-            double nz = px*qy-py*qx;  //  unit normal z for the triangle
-
-            double nax = nx;   // calculated normals
-            double nay = ny;
-            double naz = nz;
-            double nbx = nx;
-            double nby = ny;
-            double nbz = nz;
-            double ncx = nx;
-            double ncy = ny;
-            double ncz = nz;
+            double nax,nay,naz,nbx,nby,nbz,ncx,ncy,ncz = 0.0;
             if (N.length>0)
             {
-              nax = N[A[2]*3+0];
-              nay = N[A[2]*3+1];
-              naz = N[A[2]*3+2];
-              nbx = N[A[5]*3+0];
-              nby = N[A[5]*3+1];
-              nbz = N[A[5]*3+2];
-              ncx = N[A[8]*3+0];
-              ncy = N[A[8]*3+1];
-              ncz = N[A[8]*3+2];
+              idx = A[2]*3;
+              nax = N[idx++];
+              nay = N[idx++];
+              naz = N[idx];
+              idx = A[5]*3;     
+              nbx = N[idx++];
+              nby = N[idx++];
+              nbz = N[idx];
+              idx = A[8]*3;
+              ncx = N[idx++];
+              ncy = N[idx++];
+              ncz = N[idx];
+            }
+            else     // calculated normals
+            {
+              double px = vbx - vax;
+              double py = vby - vay;
+              double pz = vbz - vaz;
+              double qx = vcx - vax;
+              double qy = vcy - vay;
+              double qz = vcz - vaz;
+             // normal by determinant
+              nax=nbx=ncx= py*qz-pz*qy;  //  unit normal x for the triangle
+              nay=nby=ncy= pz*qx-px*qz;  //  unit normal y for the triangle
+              naz=nbz=ncz= px*qy-py*qx;  //  unit normal z for the triangle
             }
 
             // ----- get UVs -------------------------------------
@@ -1089,12 +1120,15 @@ class Mesh
             double vc = 1.0;
             if (T.length>0)
             {
-              ua = T[A[1]*2+0];
-              va = 1-T[A[1]*2+1];
-              ub = T[A[4]*2+0];
-              vb = 1-T[A[4]*2+1];
-              uc = T[A[7]*2+0];
-              vc = 1-T[A[7]*2+1];
+              idx=A[1]*2;
+              ua = T[idx++];
+              va = T[idx];
+              idx=A[4]*2;
+              ub = T[idx++];
+              vb = T[idx];
+              idx=A[7]*2;
+              uc = T[idx++];
+              vc = T[idx];
             }
 
             verticesData.addAll([ vax,vay,vaz, ua,va, nax,nay,naz,
@@ -1157,6 +1191,38 @@ class Mesh
       }
     }//endfunction
     loadNextImg();
+  }//endfunction
+}//endclass
+
+/**
+ * private class to hold ambient rgb, spec strength and hardness of a mesh
+ */
+class Material
+{
+  double ambR = 0.5;
+  double ambG = 0.5;
+  double ambB = 0.5;
+  double fogR = 0.0;
+  double fogG = 0.0;
+  double fogB = 0.0;
+  double fogNear = 0.0;
+  double fogFar = 0.0;
+  double specStr = 0.5;
+  double specHard = 5.0;
+  
+  Material clone()
+  {
+    Material lum = new Material();
+    lum.ambR = ambR;
+    lum.ambG = ambG;
+    lum.ambB = ambB;
+    lum.fogR = fogR;
+    lum.fogG = fogG;
+    lum.fogB = fogB;
+    lum.fogFar = fogFar;
+    lum.specStr = specStr;
+    lum.specHard = specHard;
+    return lum;
   }//endfunction
 }//endclass
 

@@ -38,9 +38,10 @@ void main()
         cube.setNormalMap(Texs[4]);
         cube.setSpecularMap(Texs[5]);
         scene.addChild(cube);
+        scene.setSpecular(3.0,5.0,true);
         tick(0.0);  // start main loop!
 
-        Mesh.loadObj("maid/maid.obj", (Mesh m) {m.transform = m.transform.translate(0.0,-1.0,0.0); scene.addChild(m);});
+        Mesh.loadObj("maid/maid.obj", (Mesh m) {m.transform = m.transform.translate(0.0,-2.0,0.0); scene.addChild(m);});
       });
 }//endmain
 
@@ -74,6 +75,6 @@ tick(double time)
                  // new PointLight(10.0*sin(time/500+PI*4/3),0.0,10.0*cos(time/500+PI*4/3),0.0,1.0,1.0)]);
   Mesh.setCamera(r*cos(sinT/10)*sin(time/5000), r*sin(sinT/10), r*cos(sinT/10)*cos(time/5000), 0.0,0.0,0.0);
 
-  Mesh.render(gl,scene,800, 600, 800 / 600);
+  Mesh.render(gl,scene,800, 600);
 }
 
