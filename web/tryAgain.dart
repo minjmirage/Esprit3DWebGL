@@ -40,7 +40,7 @@ void main()
         scene.addChild(cube);
         tick(0.0);  // start main loop!
 
-        Mesh.loadObj("maid/maid.obj", (Mesh m) {m.transform = m.transform.translate(0.0,-1.0,0.0); scene.addChild(m);});
+        Mesh.loadObj("maid/maid.obj", (Mesh m) {m.transform = m.transform.translate(0.0,-1.5,0.0); scene.addChild(m);});
       });
 }//endmain
 
